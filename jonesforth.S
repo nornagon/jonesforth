@@ -1,4 +1,4 @@
-/* A minimal FORTH interpreter for Linux / i386 systems. -*- asm -*-
+/* A somewhat minimal FORTH interpreter for Linux / i386 systems. -*- asm -*-
  * By Richard W.M. Jones <rich@annexia.org>
  *
  * gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
@@ -317,9 +317,22 @@ var_\name :
 	push %eax		// push value onto stack
 	NEXT
 
+	defcode "+!",2,ADDSTORE
+	pop %ebx		// address
+	pop %eax		// the amount to add
+	addl %eax,(%ebx)	// add it
+	NEXT
+
+	defcode "-!",2,SUBSTORE
+	pop %ebx		// address
+	pop %eax		// the amount to subtract
+	subl %eax,(%ebx)	// add it
+	NEXT
+
 /* ! and @ (STORE and FETCH) store 32-bit words.  It's also useful to be able to read and write bytes.
  * I don't know whether FORTH has these words, so I invented my own, called !b and @b.
  * Byte-oriented operations only work on architectures which permit them (i386 is one of those).
+ * UPDATE: writing a byte to the dictionary pointer is called C, in FORTH.
  */
 	defcode "!b",2,,STOREBYTE
 	pop %ebx		// address to store at
@@ -930,7 +943,7 @@ buffer:
 			DUP '\"' <>
 		WHILE
 			HERE @ !b	\\ store the character in the compiled image
-			HERE @ 1+ HERE ! \\ increment HERE pointer by 1 byte
+			HERE 1 +!	\\ increment HERE pointer by 1 byte
 		REPEAT
 		DROP		\\ drop the double quote character at the end
 		DUP		\\ get the saved address of the length word
@@ -968,6 +981,10 @@ buffer:
 	LATEST @ >CFA	\\ LATEST points to the word being compiled at the moment
 	,		\\ compile it
 ;
+
+\\ ALLOT is used to allocate (static) memory when compiling.  It increases HERE by
+\\ the amount given on the stack.
+: ALLOT HERE +! ;
 
 
 \\ Finally print the welcome prompt.
