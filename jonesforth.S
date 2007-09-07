@@ -1,4 +1,4 @@
-/* A somewhat minimal FORTH interpreter for Linux / i386 systems. -*- asm -*-
+/* A sometimes minimal FORTH interpreter for Linux / i386 systems. -*- asm -*-
  * By Richard W.M. Jones <rich@annexia.org>
  *
  * gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
