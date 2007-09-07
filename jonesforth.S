@@ -317,13 +317,13 @@ var_\name :
 	push %eax		// push value onto stack
 	NEXT
 
-	defcode "+!",2,ADDSTORE
+	defcode "+!",2,,ADDSTORE
 	pop %ebx		// address
 	pop %eax		// the amount to add
 	addl %eax,(%ebx)	// add it
 	NEXT
 
-	defcode "-!",2,SUBSTORE
+	defcode "-!",2,,SUBSTORE
 	pop %ebx		// address
 	pop %eax		// the amount to subtract
 	subl %eax,(%ebx)	// add it
@@ -943,7 +943,7 @@ buffer:
 			DUP '\"' <>
 		WHILE
 			HERE @ !b	\\ store the character in the compiled image
-			HERE 1 +!	\\ increment HERE pointer by 1 byte
+			1 HERE +!	\\ increment HERE pointer by 1 byte
 		REPEAT
 		DROP		\\ drop the double quote character at the end
 		DUP		\\ get the saved address of the length word
