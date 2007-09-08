@@ -120,7 +120,66 @@
 
 	Now the tutorial starts in earnest.
 
+	THE DICTIONARY ----------------------------------------------------------------------
+
+	In FORTH as you will know, functions are called "words", as just as in other languages they
+	have a name and a definition.  Here are two FORTH words:
+
+	: DOUBLE 2 * ;			\ name is "DOUBLE", definition is "2 *"
+	: QUADRUPLE DOUBLE DOUBLE ;	\ name is "QUADRUPLE", definition is "DOUBLE DOUBLE"
+
+	Words, both built-in ones and ones which the programmer defines later, are stored in a dictionary
+	which is just a linked list of dictionary entries.
+
+	<--- DICTIONARY ENTRY (HEADER) ----------------------->
+	+------------------------+--------+---------- - - - - +----------- - - - -
+	| LINK POINTER           | LENGTH/| NAME	      | DEFINITION
+	|			 | FLAGS  |     	      |
+	+--- (4 bytes) ----------+- byte -+- n bytes  - - - - +----------- - - - -
+
+	I'll come to the definition of the word later.  For now just look at the header.  The first
+	4 bytes are the link pointer.  This points back to the previous word in the dictionary, or, for
+	the first word in the dictionary it is just a NULL pointer.  Then comes a length/flags byte.
+	The length of the word can be up to 31 characters (5 bits used) and the top three bits are used
+	for various flags which I'll come to later.  This is followed by the name itself, and in this
+	implementation the name is rounded up to a multiple of 4 bytes by padding it with zero bytes.
+	That's just to ensure that the definition starts on a 32 bit boundary.
+
+	A FORTH variable called LATEST contains a pointer to the most recently defined word, in
+	other words, the head of this linked list.
+
+	DOUBLE and QUADRUPLE might look like this:
+
+	  pointer to previous word
+	   ^
+	   |
+	+--|------+---+---+---+---+---+---+---+---+------------- - - - -
+	| LINK    | 6 | D | O | U | B | L | E | 0 | (definition ...)
+	+---------+---+---+---+---+---+---+---+---+------------- - - - -
+           ^       len                         padding
+	   |
+	+--|------+---+---+---+---+---+---+---+---+---+---+---+---+------------- - - - -
+	| LINK    | 9 | Q | U | A | D | R | U | P | L | E | 0 | 0 | (definition ...)
+	+---------+---+---+---+---+---+---+---+---+---+---+---+---+------------- - - - -
+           ^       len                                     padding
+           |
+           |
+	  LATEST
+
+	You shoud be able to see from this how you might implement functions to find a word in
+	the dictionary (just walk along the dictionary entries starting at LATEST and matching
+	the names until you either find a match or hit the NULL pointer at the end of the dictionary),
+	and add a word to the dictionary (create a new definition, set its LINK to LATEST, and set
+	LATEST to point to the new word).  We'll see precisely these functions implemented in
+	assembly code later on.
+
 	INDIRECT THREADED CODE ----------------------------------------------------------------------
+
+	Now we'll get to the really crucial bit in understanding FORTH, so go and get a cup of tea
+	or coffee and settle down.  It's fair to say that if you don't understand this section, then you
+	won't "get" how FORTH works, and that would be a failure on my part for not explaining it well.
+	So if after reading this section a few times you don't understand it, please email me
+	(rich@annexia.org).
 
 	
 
