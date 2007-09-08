@@ -1384,10 +1384,10 @@ _TCFA:
 	FORTH solves this rather elegantly and as you might expect in a very low-level way which
 	allows you to change how the compiler works in your own code.
 
-	FORTH has an interpreter function (a true interpreter this time, not DOCOL) which runs in a
+	FORTH has an INTERPRETER function (a true interpreter this time, not DOCOL) which runs in a
 	loop, reading words (using WORD), looking them up (using FIND), turning them into codeword
 	points (using >CFA) and deciding what to do with them.  What it does depends on the mode
-	of the interpreter (in variable STATE).  When STATE is zero, the interpreter just calls
+	of the interpreter (in variable STATE).  When STATE is zero, the interpreter just runs
 	each word as it looks them up.  (Known as immediate mode).
 
 	The interesting stuff happens when STATE is non-zero -- compiling mode.  In this mode the
@@ -1441,8 +1441,35 @@ _TCFA:
 	+---------+---+---+---+---+---+---+---+---+------------+------------+------------+
                    len                         pad  codeword
 
+	The issue is what happens next.  Obviously what we _don't_ want to happen is that we
+	read ; and compile it and go on compiling everything afterwards.
 
+	At this point, FORTH uses a trick.  Remember the length byte in the dictionary definition
+	isn't just a plain length byte, but can also contain flags.  One flag is called the
+	IMMEDIATE flag (F_IMMED in this code).  If a word in the dictionary is flagged as
+	IMMEDIATE then the interpreter runs it immediately _even if it's in compile mode_.
 
+	I hope I don't need to explain that ; (SEMICOLON) is an IMMEDIATE flagged word.  And
+	all it does is append the codeword for EXIT on to the current definition and switch
+	back to immediate mode (set STATE back to 0).  After executing ; we get this:
+
+	+---------+---+---+---+---+---+---+---+---+------------+------------+------------+------------+
+	| LINK    | 6 | D | O | U | B | L | E | 0 | DOCOL      | DUP        | +          | EXIT       |
+	+---------+---+---+---+---+---+---+---+---+------------+------------+------------+------------+
+                   len                         pad  codeword					       ^
+												       |
+												      HERE
+
+	And that's it, job done, our new definition is compiled.
+
+	The only last wrinkle in this is that while our word was being compiled, it was in a
+	half-finished state.  We certainly wouldn't want DOUBLE to be called somehow during
+	this time.  There are several ways to stop this from happening, but in FORTH what we
+	do is flag the word with the HIDDEN flag (F_HIDDEN in this code) just while it is
+	being compiled.  This prevents FIND from finding it, and thus in theory stops any
+	chance of it being called.
+
+	Compared to the description above, the actual definition of : (COLON) is comparatively simple:
 */
 
 	defcode ":",1,,COLON
@@ -1478,6 +1505,11 @@ _TCFA:
 	movl $1,var_STATE
 	NEXT
 
+/*
+	, (COMMA) is a standard FORTH word which appends a 32 bit integer (normally a codeword
+	pointer) to the user data area pointed to by HERE, and adds 4 to HERE.
+*/
+
 	defcode ",",1,,COMMA
 	pop %eax		// Code pointer to store.
 	call _COMMA
@@ -1488,6 +1520,10 @@ _COMMA:
 	movl %edi,var_HERE	// Update HERE (incremented)
 	ret
 
+/*
+	; (SEMICOLON) is also elegantly simple.  Notice the F_IMMED flag.
+*/
+
 	defcode ";",1,F_IMMED,SEMICOLON
 	movl $EXIT,%eax		// EXIT is the final codeword in compiled words.
 	call _COMMA		// Store it.
@@ -1495,6 +1531,27 @@ _COMMA:
 	xor %eax,%eax		// Set STATE to 0 (back to execute mode).
 	movl %eax,var_STATE
 	NEXT
+
+/*
+	IMMEDIATE mode words aren't just for the FORTH compiler to use.  You can define your
+	own IMMEDIATE words too.  The IMMEDIATE word toggles the F_IMMED (IMMEDIATE flag) on the
+	most recently defined word, or on the current word if you call it in the middle of a
+	definition.
+
+	Typical usage is:
+
+	: MYIMMEDWORD IMMEDIATE
+		...definition...
+	;
+
+	but some FORTH programmers write this instead:
+
+	: MYIMMEDWORD
+		...definition...
+	; IMMEDIATE
+
+	The two are basically equivalent.
+*/
 
 	defcode "IMMEDIATE",9,F_IMMED,IMMEDIATE
 	call _IMMEDIATE
@@ -1505,6 +1562,11 @@ _IMMEDIATE:
 	xorb $F_IMMED,(%edi)	// Toggle the IMMED bit.
 	ret
 
+/*
+	HIDDEN toggles the other flag, F_HIDDEN, of the latest word.  Note that words flagged
+	as hidden are defined but cannot be called, so this is rarely used.
+*/
+
 	defcode "HIDDEN",6,,HIDDEN
 	call _HIDDEN
 	NEXT
@@ -1514,14 +1576,33 @@ _HIDDEN:
 	xorb $F_HIDDEN,(%edi)	// Toggle the HIDDEN bit.
 	ret
 
-	defcode "CHAR",4,,CHAR
-	call _WORD		// Returns %ecx = length, %edi = pointer to word.
-	xor %eax,%eax
-	movb (%edi),%al		// Get the first character of the word.
-	push %eax		// Push it onto the stack.
-	NEXT
+/*
+	' (TICK) is a standard FORTH word which returns the codeword pointer of the next word.
 
-/* This definiton of ' (TICK) is strictly cheating - it also only works in compiled code. */
+	The common usage is:
+
+	' FOO ,
+
+	which appends the codeword of FOO to the current word we are defining (this only works in compiled code).
+
+	You tend to use ' in IMMEDIATE words.  For example an alternate (and rather useless) way to define
+	a literal 2 might be:
+
+	: LIT2 IMMEDIATE
+		' LIT ,		\ Appends LIT to the currently-being-defined word
+		2 ,		\ Appends the number 2 to the currently-being-defined word
+	;
+
+	So you could do:
+
+	: DOUBLE LIT2 * ;
+
+	(If you don't understand how LIT2 works, then you should review the material about compiling words
+	and immediate mode).
+
+	This definition of ' uses a cheat which I copied from buzzard92.  As a result it only works in
+	compiled code.
+*/
 	defcode "'",1,,TICK
 	lodsl			// Get the address of the next word and skip it.
 	pushl %eax		// Push it on the stack.
@@ -1627,6 +1708,13 @@ _HIDDEN:
 	.align 4
 interpret_is_lit:
 	.int 0			// Flag used to record if reading a literal
+
+	defcode "CHAR",4,,CHAR
+	call _WORD		// Returns %ecx = length, %edi = pointer to word.
+	xor %eax,%eax
+	movb (%edi),%al		// Get the first character of the word.
+	push %eax		// Push it onto the stack.
+	NEXT
 
 	// NB: SYSEXIT must be the last entry in the built-in dictionary.
 	defcode SYSEXIT,7,,SYSEXIT
