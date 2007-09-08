@@ -69,6 +69,15 @@
 
  <------------------------------------------------------------------------------------------------------------------------>
 
+	Secondly make sure TABS are set to 8 characters.  The following should be a vertical
+	line.  If not, sort out your tabs.
+
+	|
+        |
+	|
+
+	Thirdly I assume that your screen is at least 50 characters high.
+
 	ASSEMBLING ----------------------------------------------------------------------
 
 	If you want to actually run this FORTH, rather than just read it, you will need Linux on an
@@ -125,7 +134,7 @@
 	In FORTH as you will know, functions are called "words", as just as in other languages they
 	have a name and a definition.  Here are two FORTH words:
 
-	: DOUBLE 2 * ;			\ name is "DOUBLE", definition is "2 *"
+	: DOUBLE DUP + ;		\ name is "DOUBLE", definition is "DUP +"
 	: QUADRUPLE DOUBLE DOUBLE ;	\ name is "QUADRUPLE", definition is "DOUBLE DOUBLE"
 
 	Words, both built-in ones and ones which the programmer defines later, are stored in a dictionary
@@ -173,7 +182,15 @@
 	LATEST to point to the new word).  We'll see precisely these functions implemented in
 	assembly code later on.
 
-	INDIRECT THREADED CODE ----------------------------------------------------------------------
+	One interesting consequence of using a linked list is that you can redefine words, and
+	a newer definition of a word overrides an older one.  This is an important concept in
+	FORTH because it means that any word (even "built-in" or "standard" words) can be
+	overridden with a new definition, either to enhance it, to make it faster or even to
+	disable it.  However because of the way that FORTH words get compiled, which you'll
+	understand below, words defined using the old definition of a word continue to use
+	the old definition.  Only words defined after the new definition use the new definition.
+
+	DIRECT THREADED CODE ----------------------------------------------------------------------
 
 	Now we'll get to the really crucial bit in understanding FORTH, so go and get a cup of tea
 	or coffee and settle down.  It's fair to say that if you don't understand this section, then you
@@ -181,15 +198,66 @@
 	So if after reading this section a few times you don't understand it, please email me
 	(rich@annexia.org).
 
-	
+	Let's talk first about what "threaded code" means.  Imagine a peculiar version of C where
+	you are only allowed to call functions without arguments.  (Don't worry for now that such a
+	language would be completely useless!)  So in our peculiar C, code would look like this:
 
+	f ()
+	{
+	  a ();
+	  b ();
+	  c ();
+	}
 
+	and so on.  How would a function, say 'f' above, be compiled by a standard C compiler?
+	Probably into assembly code like this.  On the right hand side I've written the actual
+	16 bit machine code.
 
+	f:
+	  CALL a			E8 08 00 00 00
+	  CALL b			E8 1C 00 00 00
+	  CALL c			E8 2C 00 00 00
+	  ; ignore the return from the function for now
 
+	"E8" is the x86 machine code to "CALL" a function.  In the first 20 years of computing
+	memory was hideously expensive and we might have worried about the wasted space being used
+	by the repeated "E8" bytes.  We can save 20% in code size (and therefore, in expensive memory)
+	by compressing this into just:
 
+	08 00 00 00		Just the function addresses, without
+	1C 00 00 00		the CALL prefix.
+	2C 00 00 00
 
+	Of course this code won't run directly any more.  Instead we need to write an interpreter
+	which takes each pair of bytes and calls it.
 
+	On an i386 machine it turns out that we can write this interpreter rather easily, in just
+	two assembly instructions which turn into just 3 bytes of machine code.  Let's store the
+	pointer to the next word to execute in the %esi register:
 
+		08 00 00 00	<- We're executing this one now.  %esi is the _next_ one to execute.
+	%esi -> 1C 00 00 00
+		2C 00 00 00
+
+	The all-important x86 instruction is called LODSL (or in Intel manuals, LODSW).  It does
+	two things.  Firstly it reads the memory at %esi into the accumulator (%eax).  Secondly it
+	increments %esi by 4 bytes.  So after LODSL, the situation now looks like this:
+
+		08 00 00 00	<- We're still executing this one
+		1C 00 00 00	<- %eax now contains this address (0x0000001C)
+	%esi -> 2C 00 00 00
+
+	Now we just need to jump to the address in %eax.  This is again just a single x86 instruction
+	written JMP *(%eax).  And after doing the jump, the situation looks like:
+
+		08 00 00 00
+		1C 00 00 00	<- Now we're executing this subroutine.
+	%esi -> 2C 00 00 00
+
+	To make this work, each subroutine is followed by the two instructions 'LODSL; JMP *(%eax)'
+	which literally make the jump to the next subroutine.
+
+	And that brings us to our first piece of actual code!  Well, it's a macro.
 */
 
 /* NEXT macro. */
@@ -197,6 +265,101 @@
 	lodsl
 	jmp *(%eax)
 	.endm
+
+/*	The macro is called NEXT.  That's a FORTH-ism.  It expands to those two instructions.
+
+	Every FORTH primitive that we write has to be ended by NEXT.  Think of it kind of like
+	a return.
+
+	The above describes what is known as direct threaded code.
+
+	To sum up: We compress our function calls down to a list of addresses and use a somewhat
+	magical macro to act as a "jump to next function in the list".  We also use one register (%esi)
+	to act as a kind of instruction pointer, pointing to the next function in the list.
+
+	I'll just give you a hint of what is to come by saying that a FORTH definition such as:
+
+	: QUADRUPLE DOUBLE DOUBLE ;
+
+	actually compiles (almost, not precisely but we'll see why in a moment) to a list of
+	function addresses for DOUBLE, DOUBLE and a special function called EXIT to finish off.
+
+	At this point, REALLY EAGLE-EYED ASSEMBLY EXPERTS are saying "JONES, YOU'VE MADE A MISTAKE!".
+
+	I lied about JMP *(%eax).  
+
+	INDIRECT THREADED CODE ----------------------------------------------------------------------
+
+	It turns out that direct threaded code is interesting but only if you want to just execute
+	a list of functions written in assembly language.  So QUADRUPLE would work only if DOUBLE
+	was an assembly language function.  In the direct threaded code, QUADRUPLE would look like:
+
+		+------------------+
+		| addr of DOUBLE  --------------------> (assembly code to do the double)
+		+------------------+                    NEXT
+	%esi ->	| addr of DOUBLE   |
+		+------------------+
+
+	We can add an extra indirection to allow us to run both words written in assembly language
+	(primitives written for speed) and words written in FORTH themselves as lists of addresses.
+
+	The extra indirection is the reason for the brackets in JMP *(%eax).
+
+	Let's have a look at how QUADRUPLE and DOUBLE really look in FORTH:
+
+	        : QUADRUPLE DOUBLE DOUBLE ;
+
+		+------------------+
+		| codeword         |		   : DOUBLE DUP + ;
+		+------------------+
+		| addr of DOUBLE  ---------------> +------------------+
+		+------------------+               | codeword         |
+		| addr of DOUBLE   |		   +------------------+
+		+------------------+	   	   | addr of DUP   --------------> +------------------+
+		| addr of EXIT	   |		   +------------------+            | codeword      -------+
+		+------------------+	   %esi -> | addr of +     --------+	   +------------------+   |
+						   +------------------+	   |	   | assembly to    <-----+
+						   | addr of EXIT     |    |       | implement DUP    |
+						   +------------------+	   |	   |	..	      |
+									   |	   |    ..            |
+									   |	   | NEXT             |
+									   |	   +------------------+
+									   |
+									   +-----> +------------------+
+										   | codeword      -------+
+										   +------------------+   |
+										   | assembly to   <------+
+										   | implement +      |
+										   | 	..            |
+										   | 	..            |
+										   | NEXT      	      |
+										   +------------------+
+
+	This is the part where you may need an extra cup of tea/coffee/favourite caffeinated
+	beverage.  What has changed is that I've added an extra pointer to the beginning of
+	the definitions.  In FORTH this is sometimes called the "codeword".  The codeword is
+	a pointer to the interpreter to run the function.  For primitives written in
+	assembly language, the "interpreter" just points to the actual assembly code itself.
+
+	In words written in FORTH (like QUADRUPLE and DOUBLE), the codeword points to an interpreter
+	function.
+
+	I'll show you the interpreter function shortly, but let's recall our indirect
+	JMP *(%eax) with the "extra" brackets.  Take the case where we're executing DOUBLE
+	as shown, and DUP has been called.  Note that %esi is pointing to the address of +.
+
+	The assembly code for DUP eventually does a NEXT.  That:
+
+	(1) reads the address of + into %eax		%eax points to the codeword of +
+	(2) increments %esi by 4
+	(3) jumps to the indirect %eax			jumps to the address in the codeword of +,
+							ie. the assembly code to implement +
+
+
+
+
+
+
 
 /* Macros to deal with the return stack. */
 	.macro PUSHRSP reg
