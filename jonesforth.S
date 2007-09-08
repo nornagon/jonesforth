@@ -1,10 +1,12 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 	This is PUBLIC DOMAIN (see public domain release statement below).
-	$Id: jonesforth.S,v 1.17 2007-09-08 22:10:43 rich Exp $
+	$Id: jonesforth.S,v 1.18 2007-09-08 22:23:16 rich Exp $
 
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
-
+*/
+	.set JONES_VERSION,18
+/*
 	INTRODUCTION ----------------------------------------------------------------------
 
 	FORTH is one of those alien languages which most working programmers regard in the same
@@ -993,6 +995,7 @@ var_\name :
 	_Z
 	S0		Stores the address of the top of the parameter stack.
 	R0		Stores the address of the top of the return stack.
+	VERSION		Is the current version of this FORTH.
 
 */
 	defvar "STATE",5,,STATE
@@ -1003,6 +1006,7 @@ var_\name :
 	defvar "_Z",2,,TZ
 	defvar "S0",2,,SZ
 	defvar "R0",2,,RZ,return_stack
+	defvar "VERSION",7,,VERSION,JONES_VERSION
 
 /*
 	RETURN STACK ----------------------------------------------------------------------
@@ -1813,7 +1817,7 @@ interpret_is_lit:
 	CHAR puts the ASCII code of the first character of the following word on the stack.  For example
 	CHAR A puts 65 on the stack.
 
-	SYSEXIT pops the status off the stack and exits the process (using Linux exit syscall).
+	SYSEXIT exits the process using Linux exit syscall.
 */
 
 	defcode "CHAR",4,,CHAR
@@ -2075,10 +2079,11 @@ buffer:
 
 \\ ALLOT is used to allocate (static) memory when compiling.  It increases HERE by
 \\ the amount given on the stack.
-: ALLOT HERE +! ;
+\\: ALLOT HERE +! ;
 
 
 \\ Finally print the welcome prompt.
+.\" JONESFORTH VERSION \" VERSION @ . CR
 .\" OK \"
 "
 
