@@ -66,6 +66,9 @@
 	This code draws heavily on the design of LINA FORTH (http://home.hccnet.nl/a.w.m.van.der.horst/lina.html)
 	by Albert van der Horst.  Any similarities in the code are probably not accidental.
 
+	Also I used this document (http://ftp.funet.fi/pub/doc/IOCCC/1992/buzzard.2.design) which really
+	defies easy explanation.
+
 	SETTING UP ----------------------------------------------------------------------
 
 	Let's get a few housekeeping things out of the way.  Firstly because I need to draw lots of
@@ -605,6 +608,10 @@ DOUBLE: .int DOCOL		// codeword
 	Don't worry too much about the exact implementation details of this macro - it's complicated!
 */
 
+/* Flags - these are discussed later. */
+#define F_IMMED 0x80
+#define F_HIDDEN 0x20
+
 	// Store the chain of links.
 	.set link,0
 
@@ -642,7 +649,7 @@ name_\label :
 	   |
 	  LINK in next word
 
-	Again, for brevity in writing the header I'm going to use an assembler macro called defcode.
+	Again, for brevity in writing the header I'm going to write an assembler macro called defcode.
 */
 
 	.macro defcode name, namelen, flags=0, label
@@ -727,13 +734,13 @@ code_\label :			// assembler code follows
 	NEXT
 
 	defcode "+",1,,ADD
-	pop %eax
-	addl %eax,(%esp)
+	pop %eax		// get top of stack
+	addl %eax,(%esp)	// and add it to next word on stack
 	NEXT
 
 	defcode "-",1,,SUB
-	pop %eax
-	subl %eax,(%esp)
+	pop %eax		// get top of stack
+	subl %eax,(%esp)	// and subtract if from next word on stack
 	NEXT
 
 	defcode "*",1,,MUL
@@ -798,23 +805,82 @@ code_\label :			// assembler code follows
 	orl %eax,(%esp)
 	NEXT
 
-	defcode "INVERT",6,,INVERT
+	defcode "INVERT",6,,INVERT // this is the FORTH "NOT" function
 	notl (%esp)
 	NEXT
 
-/* Flags. */
-#define F_IMMED 0x80
-#define F_HIDDEN 0x20
+/*
+	RETURNING FROM FORTH WORDS ----------------------------------------------------------------------
 
-	// COLD must not return (ie. must not call EXIT).
-	defword "COLD",4,,COLD
-	// XXX reinitialisation of the interpreter
-	.int INTERPRETER	// call the interpreter loop (never returns)
-	.int LIT,1,SYSEXIT	// hmmm, but in case it does, exit(1).
+	Time to talk about what happens when we EXIT a function.  In this diagram QUADRUPLE has called
+	DOUBLE, and DOUBLE is about to exit (look at where %esi is pointing):
+
+		QUADRUPLE
+		+------------------+
+		| codeword         |
+		+------------------+		   DOUBLE
+		| addr of DOUBLE  ---------------> +------------------+
+		+------------------+               | codeword         |
+		| addr of DOUBLE   |		   +------------------+
+		+------------------+	   	   | addr of DUP      |
+		| addr of EXIT	   |		   +------------------+
+		+------------------+	   	   | addr of +        |
+						   +------------------+
+					   %esi -> | addr of EXIT     |
+						   +------------------+
+
+	What happens when the + function does NEXT?  Well, the following code is executed.
+*/
 
 	defcode "EXIT",4,,EXIT
 	POPRSP %esi		// pop return stack into %esi
 	NEXT
+
+/*
+	EXIT gets the old %esi which we saved from before on the return stack, and puts it in %esi.
+	So after this (but just before NEXT) we get:
+
+		QUADRUPLE
+		+------------------+
+		| codeword         |
+		+------------------+		   DOUBLE
+		| addr of DOUBLE  ---------------> +------------------+
+		+------------------+               | codeword         |
+	%esi ->	| addr of DOUBLE   |		   +------------------+
+		+------------------+	   	   | addr of DUP      |
+		| addr of EXIT	   |		   +------------------+
+		+------------------+	   	   | addr of +        |
+						   +------------------+
+						   | addr of EXIT     |
+						   +------------------+
+
+	And NEXT just completes the job by, well in this case just by calling DOUBLE again :-)
+
+	LITERALS ----------------------------------------------------------------------
+
+	The final point I "glossed over" before was how to deal with functions that do anything
+	apart from calling other functions.  For example, suppose that DOUBLE was defined like this:
+
+	: DOUBLE 2 * ;
+
+	It does the same thing, but how do we compile it since it contains the literal 2?  One way
+	would be to have a function called "2" (which you'd have to write in assembler), but you'd need
+	a function for every single literal that you wanted to use.
+
+	FORTH solves this by compiling the function using a special word called LIT:
+
+	+---------------------------+-------+-------+-------+-------+-------+
+	| (usual header of DOUBLE)  | DOCOL | LIT   | 2     | *     | EXIT  |
+	+---------------------------+-------+-------+-------+-------+-------+
+
+	LIT is executed in the normal way, but what it does next is definitely not normal.  It
+	looks at %esi (which now points to the literal 2), grabs it, pushes it on the stack, then
+	manipulates %esi in order to skip the literal as if it had never been there.
+
+	What's neat is that the whole grab/manipulate can be done using a single byte single
+	i386 instruction, our old friend LODSL.  Rather than me drawing more ASCII-art diagrams,
+	see if you can find out how LIT works:
+*/
 
 	defcode "LIT",3,,LIT
 	// %esi points to the next command, but in this case it points to the next
@@ -824,25 +890,13 @@ code_\label :			// assembler code follows
 	push %eax		// push the literal number on to stack
 	NEXT
 
-	defcode "LITSTRING",9,,LITSTRING
-	lodsl			// get the length of the string
-	push %eax		// push it on the stack
-	push %esi		// push the address of the start of the string
-	addl %eax,%esi		// skip past the string
-	addl $3,%esi		// but round up to next 4 byte boundary
-	andl $~3,%esi
-	NEXT
+/*
+	MEMORY ----------------------------------------------------------------------
 
-	defcode "BRANCH",6,,BRANCH
-	add (%esi),%esi		// add the offset to the instruction pointer
-	NEXT
-
-	defcode "0BRANCH",7,,ZBRANCH
-	pop %eax
-	test %eax,%eax		// top of stack is zero?
-	jz code_BRANCH		// if so, jump back to the branch function above
-	lodsl			// otherwise we need to skip the offset
-	NEXT
+	As important point about FORTH is that it gives you direct access to the lowest levels
+	of the machine.  Manipulating memory directly is done frequently in FORTH, and these are
+	the primitive words for doing it.
+*/
 
 	defcode "!",1,,STORE
 	pop %ebx		// address to store at
@@ -886,6 +940,21 @@ code_\label :			// assembler code follows
 	push %eax		// push value onto stack
 	NEXT
 
+/*
+	BUILT-IN VARIABLES ----------------------------------------------------------------------
+
+	These are some built-in variables and related standard FORTH words.  Of these, the only one that we
+	have discussed so far was LATEST, which points to the last (most recently defined) word in the
+	FORTH dictionary.  LATEST is also a FORTH word which pushes the address of LATEST (the variable)
+	on to the stack, so you can read or write it using @ and ! operators.  For example, to print
+	the current value of LATEST (and this can apply to any FORTH variable) you would do:
+
+	LATEST @ . CR
+
+	To make defining variables shorter, I'm using a macro called defvar, similar to defword and
+	defcode above.  (In fact the defvar macro uses defcode to do the dictionary header).
+*/
+
 	.macro defvar name, namelen, flags=0, label, initial=0
 	defcode \name,\namelen,\flags,\label
 	push $var_\name
@@ -896,25 +965,34 @@ var_\name :
 	.int \initial
 	.endm
 
-	// The STATE variable is 0 for execute mode, != 0 for compile mode
+/*
+	The built-in variables are:
+
+	STATE		Is the interpreter executing code (0) or compiling a word (non-zero)?
+	LATEST		Points to the latest (most recently defined) word in the dictionary.
+	HERE		When compiling, compiled words go here.
+	_X		These are three scratch variables, used by some standard dictionary words.
+	_Y
+	_Z
+	S0		Stores the address of the top of the parameter stack.
+	R0		Stores the address of the top of the return stack.
+
+*/
 	defvar "STATE",5,,STATE
-
-	// This points to where compiled words go.
 	defvar "HERE",4,,HERE,user_defs_start
-
-	// This is the last definition in the dictionary.
 	defvar "LATEST",6,,LATEST,name_SYSEXIT // SYSEXIT must be last in built-in dictionary
-
-	// _X, _Y and _Z are scratch variables used by standard words.
 	defvar "_X",2,,TX
 	defvar "_Y",2,,TY
 	defvar "_Z",2,,TZ
-
-	// This stores the top of the data stack.
 	defvar "S0",2,,SZ
-
-	// This stores the top of the return stack.
 	defvar "R0",2,,RZ,return_stack
+
+/*
+	RETURN STACK ----------------------------------------------------------------------
+
+	These words allow you to access the return stack.  Recall that the register %ebp always points to
+	the top of the return stack.
+*/
 
 	defcode "DSP@",4,,DSPFETCH
 	mov %esp,%eax
@@ -946,6 +1024,14 @@ var_\name :
 	defcode "RDROP",5,,RDROP
 	lea 4(%ebp),%ebp	// pop return stack and throw away
 	NEXT
+
+/*
+	INPUT AND OUTPUT ----------------------------------------------------------------------
+
+
+
+
+*/
 
 #include <asm-i386/unistd.h>
 
@@ -1211,14 +1297,13 @@ _COMMA:
 	movl %edi,var_HERE	// Update HERE (incremented)
 	ret
 
-	defcode "HIDDEN",6,,HIDDEN
-	call _HIDDEN
+	defcode ";",1,F_IMMED,SEMICOLON
+	movl $EXIT,%eax		// EXIT is the final codeword in compiled words.
+	call _COMMA		// Store it.
+	call _HIDDEN		// Toggle the HIDDEN flag (unhides the new word).
+	xor %eax,%eax		// Set STATE to 0 (back to execute mode).
+	movl %eax,var_STATE
 	NEXT
-_HIDDEN:
-	movl var_LATEST,%edi	// LATEST word.
-	addl $4,%edi		// Point to name/flags byte.
-	xorb $F_HIDDEN,(%edi)	// Toggle the HIDDEN bit.
-	ret
 
 	defcode "IMMEDIATE",9,F_IMMED,IMMEDIATE
 	call _IMMEDIATE
@@ -1229,19 +1314,45 @@ _IMMEDIATE:
 	xorb $F_IMMED,(%edi)	// Toggle the IMMED bit.
 	ret
 
-	defcode ";",1,F_IMMED,SEMICOLON
-	movl $EXIT,%eax		// EXIT is the final codeword in compiled words.
-	call _COMMA		// Store it.
-	call _HIDDEN		// Toggle the HIDDEN flag (unhides the new word).
-	xor %eax,%eax		// Set STATE to 0 (back to execute mode).
-	movl %eax,var_STATE
+	defcode "HIDDEN",6,,HIDDEN
+	call _HIDDEN
 	NEXT
+_HIDDEN:
+	movl var_LATEST,%edi	// LATEST word.
+	addl $4,%edi		// Point to name/flags byte.
+	xorb $F_HIDDEN,(%edi)	// Toggle the HIDDEN bit.
+	ret
 
 /* This definiton of ' (TICK) is strictly cheating - it also only works in compiled code. */
 	defcode "'",1,,TICK
 	lodsl			// Get the address of the next word and skip it.
 	pushl %eax		// Push it on the stack.
 	NEXT
+
+	defcode "BRANCH",6,,BRANCH
+	add (%esi),%esi		// add the offset to the instruction pointer
+	NEXT
+
+	defcode "0BRANCH",7,,ZBRANCH
+	pop %eax
+	test %eax,%eax		// top of stack is zero?
+	jz code_BRANCH		// if so, jump back to the branch function above
+	lodsl			// otherwise we need to skip the offset
+	NEXT
+
+	defcode "LITSTRING",9,,LITSTRING
+	lodsl			// get the length of the string
+	push %eax		// push it on the stack
+	push %esi		// push the address of the start of the string
+	addl %eax,%esi		// skip past the string
+	addl $3,%esi		// but round up to next 4 byte boundary
+	andl $~3,%esi
+	NEXT
+
+	// COLD must not return (ie. must not call EXIT).
+	defword "COLD",4,,COLD
+	.int INTERPRETER	// call the interpreter loop (never returns)
+	.int LIT,1,SYSEXIT	// hmmm, but in case it does, exit(1).
 
 /* This interpreter is pretty simple, but remember that in FORTH you can always override
  * it later with a more powerful one!
