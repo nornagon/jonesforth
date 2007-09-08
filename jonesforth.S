@@ -1,6 +1,7 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 	This is PUBLIC DOMAIN (see public domain release statement below).
+	$Id: jonesforth.S,v 1.16 2007-09-08 17:02:11 rich Exp $
 
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
 
@@ -155,7 +156,7 @@
 
 	THE DICTIONARY ----------------------------------------------------------------------
 
-	In FORTH as you will know, functions are called "words", as just as in other languages they
+	In FORTH as you will know, functions are called "words", and just as in other languages they
 	have a name and a definition.  Here are two FORTH words:
 
 	: DOUBLE DUP + ;		\ name is "DOUBLE", definition is "DUP +"
@@ -201,7 +202,7 @@
 
 	You shoud be able to see from this how you might implement functions to find a word in
 	the dictionary (just walk along the dictionary entries starting at LATEST and matching
-	the names until you either find a match or hit the NULL pointer at the end of the dictionary),
+	the names until you either find a match or hit the NULL pointer at the end of the dictionary);
 	and add a word to the dictionary (create a new definition, set its LINK to LATEST, and set
 	LATEST to point to the new word).  We'll see precisely these functions implemented in
 	assembly code later on.
@@ -235,7 +236,7 @@
 
 	and so on.  How would a function, say 'f' above, be compiled by a standard C compiler?
 	Probably into assembly code like this.  On the right hand side I've written the actual
-	16 bit machine code.
+	i386 machine code.
 
 	f:
 	  CALL a			E8 08 00 00 00
@@ -269,7 +270,7 @@
 	%esi -> 1C 00 00 00
 		2C 00 00 00
 
-	The all-important x86 instruction is called LODSL (or in Intel manuals, LODSW).  It does
+	The all-important i386 instruction is called LODSL (or in Intel manuals, LODSW).  It does
 	two things.  Firstly it reads the memory at %esi into the accumulator (%eax).  Secondly it
 	increments %esi by 4 bytes.  So after LODSL, the situation now looks like this:
 
@@ -503,11 +504,11 @@ DOCOL:
 		| addr of DOUBLE  ---------------> +------------------+
 		+------------------+       %eax -> | addr of DOCOL    |
 	%esi ->	| addr of DOUBLE   |		   +------------------+
-		+------------------+	   	   | addr of DUP   -------------->
+		+------------------+	   	   | addr of DUP      |
 		| addr of EXIT	   |		   +------------------+
 		+------------------+               | etc.             |
 
-	First, the call to DOUBLE causes DOCOL (the codeword of DOUBLE).  DOCOL does this:  It
+	First, the call to DOUBLE calls DOCOL (the codeword of DOUBLE).  DOCOL does this:  It
 	pushes the old %esi on the return stack.  %eax points to the codeword of DOUBLE, so we
 	just add 4 on to it to get our new %esi:
 
@@ -518,7 +519,7 @@ DOCOL:
 		| addr of DOUBLE  ---------------> +------------------+
 top of return	+------------------+       %eax -> | addr of DOCOL    |
 stack points ->	| addr of DOUBLE   |	   + 4 =   +------------------+
-		+------------------+	   %esi -> | addr of DUP   -------------->
+		+------------------+	   %esi -> | addr of DUP      |
 		| addr of EXIT	   |		   +------------------+
 		+------------------+               | etc.             |
 
@@ -661,7 +662,7 @@ name_\label :
 	+--|------+---+---+---+---+------------+
 	| LINK    | 3 | D | U | P | code_DUP ---------------------> points to the assembly
 	+---------+---+---+---+---+------------+		    code used to write DUP,
-           ^       len              codeword			    which is ended with NEXT.
+           ^       len              codeword			    which ends with NEXT.
 	   |
 	  LINK in next word
 
@@ -742,11 +743,11 @@ code_\label :			// assembler code follows
 	NEXT
 
 	defcode "4+",2,,INCR4
-	addl $4,(%esp)		// increment top of stack
+	addl $4,(%esp)		// add 4 to top of stack
 	NEXT
 
 	defcode "4-",2,,DECR4
-	subl $4,(%esp)		// decrement top of stack
+	subl $4,(%esp)		// subtract 4 from top of stack
 	NEXT
 
 	defcode "+",1,,ADD
@@ -756,7 +757,7 @@ code_\label :			// assembler code follows
 
 	defcode "-",1,,SUB
 	pop %eax		// get top of stack
-	subl %eax,(%esp)	// and subtract if from next word on stack
+	subl %eax,(%esp)	// and subtract it from next word on stack
 	NEXT
 
 	defcode "*",1,,MUL
@@ -1067,7 +1068,7 @@ var_\name :
 	and compiling code, we might be reading words to execute, we might be asking for the user
 	to type their name -- ultimately it all comes in through KEY.
 
-	The implementation of KEY uses an input buffer so a certain size (defined at the end of the
+	The implementation of KEY uses an input buffer of a certain size (defined at the end of the
 	program).  It calls the Linux read(2) system call to fill this buffer and tracks its position
 	in the buffer using a couple of variables, and if it runs out of input buffer then it refills
 	it automatically.  The other thing that KEY does is if it detects that stdin has closed, it
