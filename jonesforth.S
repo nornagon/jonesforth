@@ -1,7 +1,7 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 	This is PUBLIC DOMAIN (see public domain release statement below).
-	$Id: jonesforth.S,v 1.16 2007-09-08 17:02:11 rich Exp $
+	$Id: jonesforth.S,v 1.17 2007-09-08 22:10:43 rich Exp $
 
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
 
@@ -1275,7 +1275,7 @@ _SNUMBER:
 
 	So if DOUBLE is defined in the dictionary, then WORD DOUBLE FIND returns the following pointer:
 
-	pointer to this
+    pointer to this
 	|
 	|
 	V
@@ -1338,9 +1338,12 @@ _FIND:
 
 /*
 	FIND returns the dictionary pointer, but when compiling we need the codeword pointer (recall
-	that FORTH definitions are compiled into lists of codeword pointers).
+	that FORTH definitions are compiled into lists of codeword pointers).  The standard FORTH
+	word >CFA turns a dictionary pointer into a codeword pointer.
 
-	In the example below, WORD DOUBLE FIND >CFA
+	The example below shows the result of:
+
+		WORD DOUBLE FIND >CFA
 
 	FIND returns a pointer to this
 	|				>CFA converts it to a pointer to this
@@ -1358,6 +1361,8 @@ _FIND:
 	that is not true in most FORTH implementations where they store a back pointer in the definition
 	(with an obvious memory/complexity cost).  The reason they do this is that it is useful to be
 	able to go backwards (codeword -> dictionary entry) in order to decompile FORTH definitions.
+
+	What does CFA stand for?  My best guess is "Code Field Address".
 */
 
 	defcode ">CFA",4,,TCFA
@@ -1381,7 +1386,7 @@ _TCFA:
 
 	Now we'll talk about how FORTH compiles words.  Recall that a word definition looks like this:
 
-	: DOUBLE DUP + ;
+		: DOUBLE DUP + ;
 
 	and we have to turn this into:
 
@@ -1396,28 +1401,31 @@ _TCFA:
 	  LATEST points here				points to codeword of DUP
 
 	There are several problems to solve.  Where to put the new word?  How do we read words?  How
-	do we define : (COLON) and ; (SEMICOLON)?
+	do we define the words : (COLON) and ; (SEMICOLON)?
 
 	FORTH solves this rather elegantly and as you might expect in a very low-level way which
-	allows you to change how the compiler works in your own code.
+	allows you to change how the compiler works on your own code.
 
 	FORTH has an INTERPRETER function (a true interpreter this time, not DOCOL) which runs in a
 	loop, reading words (using WORD), looking them up (using FIND), turning them into codeword
-	points (using >CFA) and deciding what to do with them.  What it does depends on the mode
-	of the interpreter (in variable STATE).  When STATE is zero, the interpreter just runs
-	each word as it looks them up.  (Known as immediate mode).
+	pointers (using >CFA) and deciding what to do with them.
+
+	What it does depends on the mode of the interpreter (in variable STATE).
+
+	When STATE is zero, the interpreter just runs each word as it looks them up.  This is known as
+	immediate mode.
 
 	The interesting stuff happens when STATE is non-zero -- compiling mode.  In this mode the
-	interpreter just appends the codeword pointers to user memory (the HERE variable points to
-	the next free byte of user memory).
+	interpreter appends the codeword pointer to user memory (the HERE variable points to the next
+	free byte of user memory).
 
 	So you may be able to see how we could define : (COLON).  The general plan is:
 
 	(1) Use WORD to read the name of the function being defined.
 
-	(2) Construct the dictionary entry header in user memory:
+	(2) Construct the dictionary entry -- just the header part -- in user memory:
 
-	  pointer to previous word (from LATEST)		+-- Afterwards, HERE points here, where
+    pointer to previous word (from LATEST)			+-- Afterwards, HERE points here, where
 	   ^							|   the interpreter will start appending
 	   |							V   codewords.
 	+--|------+---+---+---+---+---+---+---+---+------------+
@@ -1425,10 +1433,13 @@ _TCFA:
 	+---------+---+---+---+---+---+---+---+---+------------+
                    len                         pad  codeword
 
-	(3) Set LATEST to point to the newly defined word and most importantly leave HERE pointing
-	    just after the new codeword.  This is where the interpreter will append codewords.
+	(3) Set LATEST to point to the newly defined word, ...
 
-	(4) Set STATE to 1.  Go into compile mode so the interpreter starts appending codewords.
+	(4) .. and most importantly leave HERE pointing just after the new codeword.  This is where
+	    the interpreter will append codewords.
+
+	(5) Set STATE to 1.  This goes into compile mode so the interpreter starts appending codewords to
+	    our partially-formed header.
 
 	After : has run, our input is here:
 
@@ -1459,16 +1470,19 @@ _TCFA:
                    len                         pad  codeword
 
 	The issue is what happens next.  Obviously what we _don't_ want to happen is that we
-	read ; and compile it and go on compiling everything afterwards.
+	read ";" and compile it and go on compiling everything afterwards.
 
 	At this point, FORTH uses a trick.  Remember the length byte in the dictionary definition
 	isn't just a plain length byte, but can also contain flags.  One flag is called the
 	IMMEDIATE flag (F_IMMED in this code).  If a word in the dictionary is flagged as
 	IMMEDIATE then the interpreter runs it immediately _even if it's in compile mode_.
 
-	I hope I don't need to explain that ; (SEMICOLON) is an IMMEDIATE flagged word.  And
-	all it does is append the codeword for EXIT on to the current definition and switch
-	back to immediate mode (set STATE back to 0).  After executing ; we get this:
+	I hope I don't need to explain that ; (SEMICOLON) just such a word, flagged as IMMEDIATE.
+	And all it does is append the codeword for EXIT on to the current definition and switch
+	back to immediate mode (set STATE back to 0).  Shortly we'll see the actual definition
+	of ; and we'll see that it's really a very simple definition, declared IMMEDIATE.
+
+	After the interpreter reads ; and executes it 'immediately', we get this:
 
 	+---------+---+---+---+---+---+---+---+---+------------+------------+------------+------------+
 	| LINK    | 6 | D | O | U | B | L | E | 0 | DOCOL      | DUP        | +          | EXIT       |
@@ -1477,7 +1491,10 @@ _TCFA:
 												       |
 												      HERE
 
-	And that's it, job done, our new definition is compiled.
+	STATE is set to 0.
+
+	And that's it, job done, our new definition is compiled, and we're back in immediate mode
+	just reading and executing words, perhaps including a call to test our new word DOUBLE.
 
 	The only last wrinkle in this is that while our word was being compiled, it was in a
 	half-finished state.  We certainly wouldn't want DOUBLE to be called somehow during
@@ -1550,10 +1567,17 @@ _COMMA:
 	NEXT
 
 /*
-	IMMEDIATE mode words aren't just for the FORTH compiler to use.  You can define your
-	own IMMEDIATE words too.  The IMMEDIATE word toggles the F_IMMED (IMMEDIATE flag) on the
-	most recently defined word, or on the current word if you call it in the middle of a
-	definition.
+	EXTENDING THE COMPILER ----------------------------------------------------------------------
+
+	Words flagged with IMMEDIATE (F_IMMED) aren't just for the FORTH compiler to use.  You can define
+	your own IMMEDIATE words too, and this is a crucial aspect when extending basic FORTH, because
+	it allows you in effect to extend the compiler itself.  Does gcc let you do that?
+
+	Standard FORTH words like IF, WHILE, .", [ and so on are all written as extensions to the basic
+	compiler, and are all IMMEDIATE words.
+
+	The IMMEDIATE word toggles the F_IMMED (IMMEDIATE flag) on the most recently defined word,
+	or on the current word if you call it in the middle of a definition.
 
 	Typical usage is:
 
@@ -1567,7 +1591,7 @@ _COMMA:
 		...definition...
 	; IMMEDIATE
 
-	The two are basically equivalent.
+	The two usages are equivalent, to a first approximation.
 */
 
 	defcode "IMMEDIATE",9,F_IMMED,IMMEDIATE
@@ -1618,7 +1642,8 @@ _HIDDEN:
 	and immediate mode).
 
 	This definition of ' uses a cheat which I copied from buzzard92.  As a result it only works in
-	compiled code.
+	compiled code.  It is possible to write a version of ' based on WORD, FIND, >CFA which works in
+	immediate mode too.
 */
 	defcode "'",1,,TICK
 	lodsl			// Get the address of the next word and skip it.
@@ -1634,7 +1659,8 @@ _HIDDEN:
 	BRANCH is an unconditional branch. 0BRANCH is a conditional branch (it only branches if the
 	top of stack is zero).
 
-	This is how BRANCH works.  When BRANCH executes, %esi starts by pointing to the offset:
+	The diagra below shows how BRANCH works in some imaginary compiled word.  When BRANCH executes,
+	%esi starts by pointing to the offset field (compare to LIT above):
 
 	+---------------------+-------+---- - - ---+------------+------------+---- - - - ----+------------+
 	| (Dictionary header) | DOCOL |            | BRANCH     | offset     | (skipped)     | word       |
@@ -1649,7 +1675,7 @@ _HIDDEN:
 
 	0BRANCH is the same except the branch happens conditionally.
 
-	Now standard FORTH words such as IF, THEN, ELSE, WHILE, REPEAT, etc. are implemented entirely
+	Now standard FORTH words such as IF, THEN, ELSE, WHILE, REPEAT, etc. can be implemented entirely
 	in FORTH.  They are IMMEDIATE words which append various combinations of BRANCH or 0BRANCH
 	into the word currently being compiled.
 
@@ -1688,7 +1714,7 @@ _HIDDEN:
 	push %eax		// push it on the stack
 	push %esi		// push the address of the start of the string
 	addl %eax,%esi		// skip past the string
-	addl $3,%esi		// but round up to next 4 byte boundary
+ 	addl $3,%esi		// but round up to next 4 byte boundary
 	andl $~3,%esi
 	NEXT
 
@@ -1705,8 +1731,8 @@ _HIDDEN:
 
 	COLD is the first FORTH function called, almost immediately after the FORTH system "boots".
 
-	INTERPRETER is the FORTH interpreter ("toploop", "toplevel" or REPL might be a more accurate
-	description).
+	INTERPRETER is the FORTH interpreter ("toploop", "toplevel" or "REPL" might be a more accurate
+	description -- see: http://en.wikipedia.org/wiki/REPL).
 */
 
 
@@ -1811,7 +1837,8 @@ interpret_is_lit:
 	languages would be considered rather fundamental.
 
 	As a kind of trick, I prefill the input buffer with the initial FORTH code.  Once this code
-	has run (when we get to the "OK" prompt), this input buffer is reused for reading user input.
+	has run (when we get to the "OK" prompt), this input buffer is reused for reading any further
+	user input.
 
 	Some notes about the code:
 
