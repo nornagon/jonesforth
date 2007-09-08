@@ -1608,6 +1608,46 @@ _HIDDEN:
 	pushl %eax		// Push it on the stack.
 	NEXT
 
+/*
+	BRANCHING ----------------------------------------------------------------------
+
+	It turns out that all you need in order to define looping constructs, IF-statements, etc.
+	are two primitives.
+
+	BRANCH is an unconditional branch. 0BRANCH is a conditional branch (it only branches if the
+	top of stack is zero).
+
+	This is how BRANCH works.  When BRANCH executes, %esi starts by pointing to the offset:
+
+	+---------------------+-------+---- - - ---+------------+------------+---- - - - ----+------------+
+	| (Dictionary header) | DOCOL |            | BRANCH     | offset     | (skipped)     | word       |
+	+---------------------+-------+---- - - ---+------------+-----|------+---- - - - ----+------------+
+								   ^  |			      ^
+								   |  |			      |
+								   |  +-----------------------+
+								  %esi added to offset
+
+	The offset is added to %esi to make the new %esi, and the result is that when NEXT runs, execution
+	continues at the branch target.  Negative offsets work as expected.
+
+	0BRANCH is the same except the branch happens conditionally.
+
+	Now standard FORTH words such as IF, THEN, ELSE, WHILE, REPEAT, etc. are implemented entirely
+	in FORTH.  They are IMMEDIATE words which append various combinations of BRANCH or 0BRANCH
+	into the word currently being compiled.
+
+	As an example, code written like this:
+
+		condition-code IF true-part THEN rest-code
+
+	compiles to:
+
+		condition-code 0BRANCH OFFSET true-part rest-code
+					  |		^
+					  |		|
+					  +-------------+
+*/
+
 	defcode "BRANCH",6,,BRANCH
 	add (%esi),%esi		// add the offset to the instruction pointer
 	NEXT
@@ -1618,6 +1658,11 @@ _HIDDEN:
 	jz code_BRANCH		// if so, jump back to the branch function above
 	lodsl			// otherwise we need to skip the offset
 	NEXT
+
+/*
+	LITSTRING and EMITSTRING are primitives used to implement the ." operator (which is
+	written in FORTH).  See the definition of that operator below.
+*/
 
 	defcode "LITSTRING",9,,LITSTRING
 	lodsl			// get the length of the string
@@ -1637,6 +1682,8 @@ _HIDDEN:
 	int $0x80
 
 	NEXT
+
+
 
 	// COLD must not return (ie. must not call EXIT).
 	defword "COLD",4,,COLD
