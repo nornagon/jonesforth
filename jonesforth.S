@@ -61,6 +61,11 @@
 
 	Here is another "Why FORTH?" essay: http://www.jwdt.com/~paysan/why-forth.html
 
+	ACKNOWLEDGEMENTS ----------------------------------------------------------------------
+
+	This code draws heavily on the design of LINA FORTH (http://home.hccnet.nl/a.w.m.van.der.horst/lina.html)
+	by Albert van der Horst.  Any similarities in the code are probably not accidental.
+
 	SETTING UP ----------------------------------------------------------------------
 
 	Let's get a few housekeeping things out of the way.  Firstly because I need to draw lots of
@@ -228,6 +233,12 @@
 	1C 00 00 00		the CALL prefix.
 	2C 00 00 00
 
+	[Historical note: If the execution model that FORTH uses looks strange from the following
+	paragraphs, then it was motivated entirely by the need to save memory on early computers.
+	This code compression isn't so important now when our machines have more memory in their L1
+	caches than those early computers had in total, but the execution model still has some
+	useful properties].
+
 	Of course this code won't run directly any more.  Instead we need to write an interpreter
 	which takes each pair of bytes and calls it.
 
@@ -355,11 +366,75 @@
 	(3) jumps to the indirect %eax			jumps to the address in the codeword of +,
 							ie. the assembly code to implement +
 
+		+------------------+
+		| codeword         |
+		+------------------+
+		| addr of DOUBLE  ---------------> +------------------+
+		+------------------+               | codeword         |
+		| addr of DOUBLE   |		   +------------------+
+		+------------------+	   	   | addr of DUP   --------------> +------------------+
+		| addr of EXIT	   |		   +------------------+            | codeword      -------+
+		+------------------+	   	   | addr of +     --------+	   +------------------+   |
+						   +------------------+	   |	   | assembly to    <-----+
+					   %esi -> | addr of EXIT     |    |       | implement DUP    |
+						   +------------------+	   |	   |	..	      |
+									   |	   |    ..            |
+									   |	   | NEXT             |
+									   |	   +------------------+
+									   |
+									   +-----> +------------------+
+										   | codeword      -------+
+										   +------------------+   |
+									now we're  | assembly to   <------+
+									executing  | implement +      |
+									this	   | 	..            |
+									function   | 	..            |
+										   | NEXT      	      |
+										   +------------------+
 
+	So I hope that I've convinced you that NEXT does roughly what you'd expect.  This is
+	indirect threaded code.
 
+	I've glossed over four things.  I wonder if you can guess without reading on what they are?
 
+	.
+	.
+	.
 
+	My list of four things are: (1) What does "EXIT" do?  (2) which is related to (1) is how do
+	you call into a function, ie. how does %esi start off pointing at part of QUADRUPLE, but
+	then point at part of DOUBLE.  (3) What goes in the codeword for the words which are written
+	in FORTH?  (4) How do you compile a function which does anything except call other functions
+	ie. a function which contains a number like : DOUBLE 2 * ; ?
 
+	THE INTERPRETER AND RETURN STACK ------------------------------------------------------------
+
+	Going at these in no particular order, let's talk about issues (3) and (2), the interpreter
+	and the return stack.
+
+	Words which are defined in FORTH need a codeword which points to a little bit of code to
+	give them a "helping hand" in life.  They don't need much, but they do need what is known
+	as an "interpreter", although it doesn't really "interpret" in the same way that, say,
+	Java bytecode used to be interpreted (ie. slowly).  This interpreter just sets up a few
+	machine registers so that the word can then execute at full speed using the indirect
+	threaded model above.
+
+	One of the things that needs to happen when QUADRUPLE calls DOUBLE is that we save the old
+	%esi ("instruction pointer") and create a new one pointing to the first word in DOUBLE.
+	Because we will need to restore the old %esi at the end of DOUBLE (this is, after all, like
+	a function call), we will need a stack to store these "return addresses" (old values of %esi).
+
+	As you will have read, when reading the background documentation, FORTH has two stacks,
+	an ordinary stack for parameters, and a return stack which is a bit more mysterious.  But
+	our return stack is just the stack I talked about in the previous paragraph, used to save
+	%esi when calling from a FORTH word into another FORTH word.
+
+	In this FORTH, we are using the normal stack pointer (%esp) for the parameter stack.
+	We will use the i386's "other" stack pointer (%ebp, usually called the "frame pointer")
+	for our return stack.
+
+	I've got two macros which just wrap up the details of using %ebp for the return stack:
+*/
 
 /* Macros to deal with the return stack. */
 	.macro PUSHRSP reg
@@ -371,6 +446,74 @@
 	mov (%ebp),\reg		// pop top of return stack to reg
 	lea 4(%ebp),%ebp
 	.endm
+
+/*
+	And with that we can now talk about the interpreter.
+
+	In FORTH the interpreter function is often called DOCOL (I think it means "DO COLON" because
+	all FORTH definitions start with a colon, as in : DOUBLE DUP + ;
+
+	The "interpreter" (it's not really "interpreting") just needs to push the old %esi on the
+	stack and set %esi to the first word in the definition.  Remember that we jumped to the
+	function using JMP *(%eax)?  Well a consequence of that is that conveniently %eax contains
+	the address of this codeword, so just by adding 4 to it we get the address of the first
+	data word.  Finally after setting up %esi, it just does NEXT which causes that first word
+	to run.
+*/
+
+/* DOCOL - the interpreter! */
+	.text
+	.align 4
+DOCOL:
+	PUSHRSP %esi		// push %esi on to the return stack
+	addl $4,%eax		// %eax points to codeword, so make
+	movl %eax,%esi		// %esi point to first data word
+	NEXT
+
+/*
+	Just to make this absolutely clear, let's see how DOCOL works when jumping from QUADRUPLE
+	into DOUBLE:
+
+		QUADRUPLE:
+		+------------------+
+		| codeword         |
+		+------------------+		   DOUBLE:
+		| addr of DOUBLE  ---------------> +------------------+
+		+------------------+       %eax -> | addr of DOCOL    |
+	%esi ->	| addr of DOUBLE   |		   +------------------+
+		+------------------+	   	   | addr of DUP   -------------->
+		| addr of EXIT	   |		   +------------------+
+		+------------------+               | etc.             |
+
+	First, the call to DOUBLE causes DOCOL (the codeword of DOUBLE).  DOCOL does this:  It
+	pushes the old %esi on the return stack.  %eax points to the codeword of DOUBLE, so we
+	just add 4 on to it to get our new %esi:
+
+		QUADRUPLE:
+		+------------------+
+		| codeword         |
+		+------------------+		   DOUBLE:
+		| addr of DOUBLE  ---------------> +------------------+
+		+------------------+               | addr of DOCOL    |
+		| addr of DOUBLE   |		   +------------------+
+		+------------------+	   %esi -> | addr of DUP   -------------->
+		| addr of EXIT	   |		   +------------------+
+		+------------------+               | etc.             |
+
+	Then we do NEXT, and because of the magic of threaded code that increments %esi again
+	and calls DUP.
+
+	Well, it seems to work.
+
+	One minor point here.  Because DOCOL is the first bit of assembly actually to be defined
+	in this file (the others were just macros), and because I usually compile this code with the
+	text segment starting at address 0, DOCOL has address 0.  So if you are disassembling the
+	code and see a word with a codeword of 0, you will immediately know that the word is
+	written in FORTH (it's not an assembler primitive) and so uses DOCOL as the interpreter.
+*/
+
+
+
 
 /* ELF entry point. */
 	.text
@@ -386,15 +529,6 @@ _start:
 	.section .rodata
 cold_start:			// High-level code without a codeword.
 	.int COLD
-
-/* DOCOL - the interpreter! */
-	.text
-	.align 4
-DOCOL:
-	PUSHRSP %esi		// push %esi on to the return stack
-	addl $4,%eax		// %eax points to codeword, so make
-	movl %eax,%esi		// %esi point to first data word
-	NEXT
 
 /*----------------------------------------------------------------------
  * Fixed sized buffers for everything.
