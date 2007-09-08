@@ -107,6 +107,14 @@
 	strings (or rather it used to, but the developers removed it!) so I've abused the syntax
 	slightly to make things readable.  Ignore these warnings.
 
+	If you want to run your own FORTH programs you can do:
+
+	./jonesforth < myprog.f
+
+	If you want to load your own FORTH code and then continue reading user commands, you can do:
+
+	cat myfunctions.f - | ./jonesforth
+
 	ASSEMBLER ----------------------------------------------------------------------
 
 	(You can just skip to the next section -- you don't need to be able to read assembler to
@@ -1660,6 +1668,8 @@ _HIDDEN:
 	NEXT
 
 /*
+	PRINTING STRINGS ----------------------------------------------------------------------
+
 	LITSTRING and EMITSTRING are primitives used to implement the ." operator (which is
 	written in FORTH).  See the definition of that operator below.
 */
@@ -1677,12 +1687,18 @@ _HIDDEN:
 	mov $1,%ebx		// 1st param: stdout
 	pop %ecx		// 2nd param: address of string
 	pop %edx		// 3rd param: length of string
-
 	mov $__NR_write,%eax	// write syscall
 	int $0x80
-
 	NEXT
 
+/*
+	COLD START AND INTERPRETER ----------------------------------------------------------------------
+
+	COLD is the first FORTH function called, almost immediately after the FORTH system "boots".
+
+	INTERPRETER is the FORTH interpreter ("toploop", "toplevel" or REPL might be a more accurate
+	description).
+*/
 
 
 	// COLD must not return (ie. must not call EXIT).
@@ -1756,6 +1772,15 @@ _HIDDEN:
 interpret_is_lit:
 	.int 0			// Flag used to record if reading a literal
 
+/*
+	ODDS AND ENDS ----------------------------------------------------------------------
+
+	CHAR puts the ASCII code of the first character of the following word on the stack.  For example
+	CHAR A puts 65 on the stack.
+
+	SYSEXIT pops the status off the stack and exits the process (using Linux exit syscall).
+*/
+
 	defcode "CHAR",4,,CHAR
 	call _WORD		// Returns %ecx = length, %edi = pointer to word.
 	xor %eax,%eax
@@ -1769,13 +1794,38 @@ interpret_is_lit:
 	mov $__NR_exit,%eax
 	int $0x80
 
-/*----------------------------------------------------------------------
- * Input buffer & initial input.
- */
+/*
+	START OF FORTH CODE ----------------------------------------------------------------------
+
+	We've now reached the stage where the FORTH system is running and self-hosting.  All further
+	words can be written as FORTH itself, including words like IF, THEN, .", etc which in most
+	languages would be considered rather fundamental.
+
+	As a kind of trick, I prefill the input buffer with the initial FORTH code.  Once this code
+	has run (when we get to the "OK" prompt), this input buffer is reused for reading user input.
+
+	Some notes about the code:
+
+	\ (backslash) is the FORTH way to start a comment which goes up to the next newline.  However
+	because this is a C-style string, I have to escape the backslash, which is why they appear as
+	\\ comment.
+
+	Similarly, any backslashes in the code are doubled, and " becomes \" (eg. the definition of ."
+	is written as : .\" ... ;)
+
+	I use indenting to show structure.  The amount of whitespace has no meaning to FORTH however
+	except that you must use at least one whitespace character between words, and words themselves
+	cannot contain whitespace.
+
+	FORTH is case-sensitive.  Use capslock!
+
+	Enjoy!
+*/
+
 	.data
 	.align 4096
 buffer:
-	// XXX gives 'Warning: unterminated string; newline inserted' messages which you can ignore
+	// Multi-line constant gives 'Warning: unterminated string; newline inserted' messages which you can ignore
 	.ascii "\
 \\ Define some character constants
 : '\\n'   10 ;
@@ -2004,3 +2054,5 @@ currkey:
 	.int buffer
 bufftop:
 	.int _initbufftop
+
+/* END OF jonesforth.S */
