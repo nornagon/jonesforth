@@ -1,11 +1,11 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 	This is PUBLIC DOMAIN (see public domain release statement below).
-	$Id: jonesforth.S,v 1.18 2007-09-08 22:23:16 rich Exp $
+	$Id: jonesforth.S,v 1.19 2007-09-08 22:51:28 rich Exp $
 
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
 */
-	.set JONES_VERSION,18
+	.set JONES_VERSION,19
 /*
 	INTRODUCTION ----------------------------------------------------------------------
 
@@ -1865,7 +1865,7 @@ interpret_is_lit:
 	.data
 	.align 4096
 buffer:
-	// Multi-line constant gives 'Warning: unterminated string; newline inserted' messages which you can ignore
+	// Multi-line constant gives 'Warning: unterminated string; newline inserted' messages which you can ignore.
 	.ascii "\
 \\ Define some character constants
 : '\\n'   10 ;
@@ -2026,7 +2026,7 @@ buffer:
 \\ that the input buffer where the string comes from may be overwritten by the time we
 \\ come round to running the function).  We store the string in the compiled function
 \\ like this:
-\\   LITSTRING, string length, string rounded up to 4 bytes, EMITSTRING, ...
+\\   ..., LITSTRING, string length, string rounded up to 4 bytes, EMITSTRING, ...
 : .\" IMMEDIATE
 	STATE @		\\ compiling?
 	IF
