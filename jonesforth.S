@@ -1,16 +1,132 @@
-/* A sometimes minimal FORTH interpreter for Linux / i386 systems. -*- asm -*-
- * By Richard W.M. Jones <rich@annexia.org>
- *
- * gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
- */
+/*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
+	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 
-#include <asm-i386/unistd.h>
+	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
 
-/* NOTES-------------------------------------------------------------------------------------------------------------------
+	INTRODUCTION ----------------------------------------------------------------------
 
-Need to say something about $ before constants.
+	FORTH is one of those alien languages which most working programmers regard in the same
+	way as Haskell, LISP, and so on.  Something so strange that they'd rather any thoughts
+	of it just go away so they can get on with writing this paying code.  But that's wrong
+	and if you care at all about programming then you should at least understand all these
+	languages, even if you will never use them.
 
-And about je/jne/ja/jb/jbe/etc
+	LISP is the ultimate high-level language, and features from LISP are being added every
+	decade to the more common languages.  But FORTH is in some ways the ultimate in low level
+	programming.  Out of the box it lacks features like dynamic memory management and even
+	strings.  In fact, at its primitive level it lacks even basic concepts like IF-statements
+	and loops.
+
+	Why then would you want to learn FORTH?  There are several very good reasons.  First
+	and foremost, FORTH is minimal.  You really can write a complete FORTH in, say, 2000
+	lines of code.  I don't just mean a FORTH program, I mean a complete FORTH operating
+	system, environment and language.  You could boot such a FORTH on a bare PC and it would
+	come up with a prompt where you could start doing useful work.  The FORTH you have here
+	isn't minimal and uses a Linux process as its 'base PC' (both for the purposes of making
+	it a good tutorial). It's possible to completely understand the system.  Who can say they
+	completely understand how Linux works, or gcc?
+
+	Secondly FORTH has a peculiar bootstrapping property.  By that I mean that after writing
+	a little bit of assembly to talk to the hardware and implement a few primitives, all the
+	rest of the language and compiler is written in FORTH itself.  Remember I said before
+	that FORTH lacked IF-statements and loops?  Well of course it doesn't really because
+	such a lanuage would be useless, but my point was rather that IF-statements and loops are
+	written in FORTH itself.
+
+	Now of course this is common in other languages as well, and in those languages we call
+	them 'libraries'.  For example in C, 'printf' is a library function written in C.  But
+	in FORTH this goes way beyond mere libraries.  Can you imagine writing C's 'if' in C?
+	And that brings me to my third reason: If you can write 'if' in FORTH, then why restrict
+	yourself to the usual if/while/for/switch constructs?  You want a construct that iterates
+	over every other element in a list of numbers?  You can add it to the language.  What
+	about an operator which pulls in variables directly from a configuration file and makes
+	them available as FORTH variables?  Or how about adding Makefile-like dependencies to
+	the language?  No problem in FORTH.  This concept isn't common in programming languages,
+	but it has a name (in fact two names): "macros" (by which I mean LISP-style macros, not
+	the lame C preprocessor) and "domain specific languages" (DSLs).
+
+	This tutorial isn't about learning FORTH as the language.  I'll point you to some references
+	you should read if you're not familiar with using FORTH.  This tutorial is about how to
+	write FORTH.  In fact, until you understand how FORTH is written, you'll have only a very
+	superficial understanding of how to use it.
+
+	So if you're not familiar with FORTH or want to refresh your memory here are some online
+	references to read:
+
+	http://en.wikipedia.org/wiki/Forth_%28programming_language%29
+
+	http://galileo.phys.virginia.edu/classes/551.jvn.fall01/primer.htm
+
+	http://wiki.laptop.org/go/Forth_Lessons
+
+	Here is another "Why FORTH?" essay: http://www.jwdt.com/~paysan/why-forth.html
+
+	SETTING UP ----------------------------------------------------------------------
+
+	Let's get a few housekeeping things out of the way.  Firstly because I need to draw lots of
+	ASCII-art diagrams to explain concepts, the best way to look at this is using a window which
+	uses a fixed width font and is at least this wide:
+
+ <------------------------------------------------------------------------------------------------------------------------>
+
+	ASSEMBLING ----------------------------------------------------------------------
+
+	If you want to actually run this FORTH, rather than just read it, you will need Linux on an
+	i386.  Linux because instead of programming directly to the hardware on a bare PC which I
+	could have done, I went for a simpler tutorial by assuming that the 'hardware' is a Linux
+	process with a few basic system calls (read, write and exit and that's about all).  i386
+	is needed because I had to write the assembly for a processor, and i386 is by far the most
+	common.  (Of course when I say 'i386', any 32- or 64-bit x86 processor will do.  I'm compiling
+	this on a 64 bit AMD Opteron).
+
+	Again, to assemble this you will need gcc and gas (the GNU assembler).  The commands to
+	assemble and run the code (save this file as 'jonesforth.S') are:
+
+	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
+	./jonesforth
+
+	You will see lots of 'Warning: unterminated string; newline inserted' messages from the
+	assembler.  That's just because the GNU assembler doesn't have a good syntax for multi-line
+	strings (or rather it used to, but the developers removed it!) so I've abused the syntax
+	slightly to make things readable.  Ignore these warnings.
+
+	ASSEMBLER ----------------------------------------------------------------------
+
+	(You can just skip to the next section -- you don't need to be able to read assembler to
+	follow this tutorial).
+
+	However if you do want to read the assembly code here are a few notes about gas (the GNU assembler):
+
+	(1) Register names are prefixed with '%', so %eax is the 32 bit i386 accumulator.  The registers
+	    available on i386 are: %eax, %ebx, %ecx, %edx, %esi, %edi, %ebp and %esp, and most of them
+	    have special purposes.
+
+	(2) Add, mov, etc. take arguments in the form SRC,DEST.  So mov %eax,%ecx moves %eax -> %ecx
+
+	(3) Constants are prefixed with '$', and you mustn't forget it!  If you forget it then it
+	    causes a read from memory instead, so:
+	    mov $2,%eax		moves number 2 into %eax
+	    mov 2,%eax		reads the 32 bit word from address 2 into %eax (ie. most likely a mistake)
+
+	(4) gas has a funky syntax for local labels, where '1f' (etc.) means label '1:' "forwards"
+	    and '1b' (etc.) means label '1:' "backwards".
+
+	(5) 'ja' is "jump if above", 'jb' for "jump if below", 'je' "jump if equal" etc.
+
+	(6) gas has a reasonably nice .macro syntax, and I use them a lot to make the code shorter and
+	    less repetitive.
+
+	For more help reading the assembler, do "info gas" at the Linux prompt.
+
+	Now the tutorial starts in earnest.
+
+	INDIRECT THREADED CODE ----------------------------------------------------------------------
+
+	
+
+
+
+
 
 
 
@@ -397,6 +513,8 @@ var_\name :
 	defcode "RDROP",5,,RDROP
 	lea 4(%ebp),%ebp	// pop return stack and throw away
 	NEXT
+
+#include <asm-i386/unistd.h>
 
 	defcode "KEY",3,,KEY
 	call _KEY
