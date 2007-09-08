@@ -970,7 +970,7 @@ var_\name :
 
 	STATE		Is the interpreter executing code (0) or compiling a word (non-zero)?
 	LATEST		Points to the latest (most recently defined) word in the dictionary.
-	HERE		When compiling, compiled words go here.
+	HERE		Points to the next free byte of memory.  When compiling, compiled words go here.
 	_X		These are three scratch variables, used by some standard dictionary words.
 	_Y
 	_Z
@@ -993,15 +993,6 @@ var_\name :
 	These words allow you to access the return stack.  Recall that the register %ebp always points to
 	the top of the return stack.
 */
-
-	defcode "DSP@",4,,DSPFETCH
-	mov %esp,%eax
-	push %eax
-	NEXT
-
-	defcode "DSP!",4,,DSPSTORE
-	pop %esp
-	NEXT
 
 	defcode ">R",2,,TOR
 	pop %eax		// pop parameter stack into %eax
@@ -1026,11 +1017,45 @@ var_\name :
 	NEXT
 
 /*
+	PARAMETER (DATA) STACK ----------------------------------------------------------------------
+
+	These functions allow you to manipulate the parameter stack.  Recall that Linux sets up the parameter
+	stack for us, and it is accessed through %esp.
+*/
+
+	defcode "DSP@",4,,DSPFETCH
+	mov %esp,%eax
+	push %eax
+	NEXT
+
+	defcode "DSP!",4,,DSPSTORE
+	pop %esp
+	NEXT
+
+/*
 	INPUT AND OUTPUT ----------------------------------------------------------------------
 
+	These are our first really meaty/complicated FORTH primitives.  I have chosen to write them in
+	assembler, but surprisingly in "real" FORTH implementations these are often written in terms
+	of more fundamental FORTH primitives.  I chose to avoid that because I think that just obscures
+	the implementation.  After all, you may not understand assembler but you can just think of it
+	as an opaque block of code that does what it says.
 
+	Let's discuss input first.
 
+	The FORTH word KEY reads the next byte from stdin (and pushes it on the parameter stack).
+	So if KEY is called and someone hits the space key, then the number 32 (ASCII code of space)
+	is pushed on the stack.
 
+	In FORTH there is no distinction between reading code and reading input.  We might be reading
+	and compiling code, we might be reading words to execute, we might be asking for the user
+	to type their name -- ultimately it all comes in through KEY.
+
+	The implementation of KEY uses an input buffer so a certain size (defined at the end of the
+	program).  It calls the Linux read(2) system call to fill this buffer and tracks its position
+	in the buffer using a couple of variables, and if it runs out of input buffer then it refills
+	it automatically.  The other thing that KEY does is if it detects that stdin has closed, it
+	exits the program, which is why when you hit ^D the FORTH system cleanly exits.
 */
 
 #include <asm-i386/unistd.h>
@@ -1067,6 +1092,12 @@ _KEY:
 	mov $__NR_exit,%eax	// syscall: exit
 	int $0x80
 
+/*
+	By contrast, output is much simpler.  The FORTH word EMIT writes out a single byte to stdout.
+	This implementation just uses the write system call.  No attempt is made to buffer output, but
+	it would be a good exercise to add it.
+*/
+
 	defcode "EMIT",4,,EMIT
 	pop %eax
 	call _EMIT
@@ -1086,6 +1117,33 @@ _EMIT:
 
 	.bss
 2:	.space 1		// scratch used by EMIT
+
+/*
+	Back to input, WORD is a FORTH word which reads the next full word of input.
+
+	What it does in detail is that it first skips any blanks (spaces, tabs, newlines and so on).
+	Then it calls KEY to read characters into an internal buffer until it hits a blank.  Then it
+	calculates the length of the word it read and returns the address and the length as
+	two words on the stack (with address at the top).
+
+	Notice that WORD has a single internal buffer which it overwrites each time (rather like
+	a static C string).  Also notice that WORD's internal buffer is just 32 bytes long and
+	there is NO checking for overflow.  31 bytes happens to be the maximum length of a
+	FORTH word that we support, and that is what WORD is used for: to read FORTH words when
+	we are compiling and executing code.  The returned strings are not NUL-terminated, so
+	in some crazy-world you could define FORTH words containing ASCII NULs, although why
+	you'd want to is a bit beyond me.
+
+	WORD is not suitable for just reading strings (eg. user input) because of all the above
+	peculiarities and limitations.
+
+	Note that when executing, you'll see:
+	WORD FOO
+	which puts "FOO" and length 3 on the stack, but when compiling:
+	: BAR WORD FOO ;
+	is an error (or at least it doesn't do what you might expect).  Later we'll talk about compiling
+	and immediate mode, and you'll understand why.
+*/
 
 	defcode "WORD",4,,WORD
 	call _WORD
@@ -1128,15 +1186,14 @@ _WORD:
 	// overwrite this buffer.  Maximum word length is 32 chars.
 5:	.space 32
 
-	defcode "EMITSTRING",10,,EMITSTRING
-	mov $1,%ebx		// 1st param: stdout
-	pop %ecx		// 2nd param: address of string
-	pop %edx		// 3rd param: length of string
+/*
+	. (also called DOT) prints the top of the stack as an integer.  In real FORTH implementations
+	it should print it in the current base, but this assembler version is simpler and can only
+	print in base 10.
 
-	mov $__NR_write,%eax	// write syscall
-	int $0x80
-
-	NEXT
+	Remember that you can override even built-in FORTH words easily, so if you want to write a
+	more advanced DOT then you can do so easily at a later point, and probably in FORTH.
+*/
 
 	defcode ".",1,,DOT
 	pop %eax		// Get the number to print into %eax
@@ -1161,9 +1218,16 @@ _DOT:
 	call _EMIT
 	ret
 
-	// Parse a number from a string on the stack -- almost the opposite of . (DOT)
-	// Note that there is absolutely no error checking.  In particular the length of the
-	// string must be >= 1 bytes.
+/*
+	Almost the opposite of DOT (but not quite), SNUMBER parses a numeric string such as one returned
+	by WORD and pushes the number on the parameter stack.
+
+	This function does absolutely no error checking, and in particular the length of the string
+	must be >= 1 bytes, and should contain only digits 0-9.  If it doesn't you'll get random results.
+
+	This function is only used when reading literal numbers in code, and shouldn't really be used
+	in user code at all.
+*/
 	defcode "SNUMBER",7,,SNUMBER
 	pop %edi
 	pop %ecx
@@ -1182,6 +1246,30 @@ _SNUMBER:
 	dec %ecx
 	jnz 1b
 	ret
+
+/*
+	DICTIONARY LOOK UPS ----------------------------------------------------------------------
+
+	We're building up to our prelude on how FORTH code is compiled, but first we need yet more infrastructure.
+
+	The FORTH word FIND takes a string (a word as parsed by WORD -- see above) and looks it up in the
+	dictionary.  What it actually returns is the address of the dictionary header, if it finds it,
+	or 0 if it didn't.
+
+	So if DOUBLE is defined in the dictionary, then WORD DOUBLE FIND returns the following pointer:
+
+	pointer to this
+	|
+	|
+	V
+	+---------+---+---+---+---+---+---+---+---+------------+------------+------------+------------+
+	| LINK    | 6 | D | O | U | B | L | E | 0 | DOCOL      | DUP        | +          | EXIT       |
+	+---------+---+---+---+---+---+---+---+---+------------+------------+------------+------------+
+
+	See also >CFA which takes a dictionary entry pointer and returns a pointer to the codeword.
+
+	FIND doesn't find dictionary entries which are flagged as HIDDEN.  See below for why.
+*/
 
 	defcode "FIND",4,,FIND
 	pop %edi		// %edi = address
@@ -1231,7 +1319,31 @@ _FIND:
 	xor %eax,%eax		// Return zero to indicate not found.
 	ret
 
-	defcode ">CFA",4,,TCFA	// DEA -> Codeword address
+/*
+	FIND returns the dictionary pointer, but when compiling we need the codeword pointer (recall
+	that FORTH definitions are compiled into lists of codeword pointers).
+
+	In the example below, WORD DOUBLE FIND >CFA
+
+	FIND returns a pointer to this
+	|				>CFA converts it to a pointer to this
+	|					   |
+	V					   V
+	+---------+---+---+---+---+---+---+---+---+------------+------------+------------+------------+
+	| LINK    | 6 | D | O | U | B | L | E | 0 | DOCOL      | DUP        | +          | EXIT       |
+	+---------+---+---+---+---+---+---+---+---+------------+------------+------------+------------+
+
+	Notes:
+
+	Because names vary in length, this isn't just a simple increment.
+
+	In this FORTH you cannot easily turn a codeword pointer back into a dictionary entry pointer, but
+	that is not true in most FORTH implementations where they store a back pointer in the definition
+	(with an obvious memory/complexity cost).  The reason they do this is that it is useful to be
+	able to go backwards (codeword -> dictionary entry) in order to decompile FORTH definitions.
+*/
+
+	defcode ">CFA",4,,TCFA
 	pop %edi
 	call _TCFA
 	push %edi
@@ -1247,12 +1359,91 @@ _TCFA:
 	andl $~3,%edi
 	ret
 
-	defcode "CHAR",4,,CHAR
-	call _WORD		// Returns %ecx = length, %edi = pointer to word.
-	xor %eax,%eax
-	movb (%edi),%al		// Get the first character of the word.
-	push %eax		// Push it onto the stack.
-	NEXT
+/*
+	COMPILING ----------------------------------------------------------------------
+
+	Now we'll talk about how FORTH compiles words.  Recall that a word definition looks like this:
+
+	: DOUBLE DUP + ;
+
+	and we have to turn this into:
+
+	  pointer to previous word
+	   ^
+	   |
+	+--|------+---+---+---+---+---+---+---+---+------------+------------+------------+------------+
+	| LINK    | 6 | D | O | U | B | L | E | 0 | DOCOL      | DUP        | +          | EXIT       |
+	+---------+---+---+---+---+---+---+---+---+------------+--|---------+------------+------------+
+           ^       len                         pad  codeword      |
+	   |							  V
+	  LATEST points here				points to codeword of DUP
+
+	There are several problems to solve.  Where to put the new word?  How do we read words?  How
+	do we define : (COLON) and ; (SEMICOLON)?
+
+	FORTH solves this rather elegantly and as you might expect in a very low-level way which
+	allows you to change how the compiler works in your own code.
+
+	FORTH has an interpreter function (a true interpreter this time, not DOCOL) which runs in a
+	loop, reading words (using WORD), looking them up (using FIND), turning them into codeword
+	points (using >CFA) and deciding what to do with them.  What it does depends on the mode
+	of the interpreter (in variable STATE).  When STATE is zero, the interpreter just calls
+	each word as it looks them up.  (Known as immediate mode).
+
+	The interesting stuff happens when STATE is non-zero -- compiling mode.  In this mode the
+	interpreter just appends the codeword pointers to user memory (the HERE variable points to
+	the next free byte of user memory).
+
+	So you may be able to see how we could define : (COLON).  The general plan is:
+
+	(1) Use WORD to read the name of the function being defined.
+
+	(2) Construct the dictionary entry header in user memory:
+
+	  pointer to previous word (from LATEST)		+-- Afterwards, HERE points here, where
+	   ^							|   the interpreter will start appending
+	   |							V   codewords.
+	+--|------+---+---+---+---+---+---+---+---+------------+
+	| LINK    | 6 | D | O | U | B | L | E | 0 | DOCOL      |
+	+---------+---+---+---+---+---+---+---+---+------------+
+                   len                         pad  codeword
+
+	(3) Set LATEST to point to the newly defined word and most importantly leave HERE pointing
+	    just after the new codeword.  This is where the interpreter will append codewords.
+
+	(4) Set STATE to 1.  Go into compile mode so the interpreter starts appending codewords.
+
+	After : has run, our input is here:
+
+	: DOUBLE DUP + ;
+	         ^
+		 |
+		Next byte returned by KEY
+
+	so the interpreter (now it's in compile mode, so I guess it's really the compiler) reads DUP,
+	gets its codeword pointer, and appends it:
+
+									     +-- HERE updated to point here.
+									     |
+									     V
+	+---------+---+---+---+---+---+---+---+---+------------+------------+
+	| LINK    | 6 | D | O | U | B | L | E | 0 | DOCOL      | DUP        |
+	+---------+---+---+---+---+---+---+---+---+------------+------------+
+                   len                         pad  codeword
+
+	Next we read +, get the codeword pointer, and append it:
+
+											  +-- HERE updated to point here.
+											  |
+											  V
+	+---------+---+---+---+---+---+---+---+---+------------+------------+------------+
+	| LINK    | 6 | D | O | U | B | L | E | 0 | DOCOL      | DUP        | +          |
+	+---------+---+---+---+---+---+---+---+---+------------+------------+------------+
+                   len                         pad  codeword
+
+
+
+*/
 
 	defcode ":",1,,COLON
 
@@ -1323,6 +1514,13 @@ _HIDDEN:
 	xorb $F_HIDDEN,(%edi)	// Toggle the HIDDEN bit.
 	ret
 
+	defcode "CHAR",4,,CHAR
+	call _WORD		// Returns %ecx = length, %edi = pointer to word.
+	xor %eax,%eax
+	movb (%edi),%al		// Get the first character of the word.
+	push %eax		// Push it onto the stack.
+	NEXT
+
 /* This definiton of ' (TICK) is strictly cheating - it also only works in compiled code. */
 	defcode "'",1,,TICK
 	lodsl			// Get the address of the next word and skip it.
@@ -1347,6 +1545,16 @@ _HIDDEN:
 	addl %eax,%esi		// skip past the string
 	addl $3,%esi		// but round up to next 4 byte boundary
 	andl $~3,%esi
+	NEXT
+
+	defcode "EMITSTRING",10,,EMITSTRING
+	mov $1,%ebx		// 1st param: stdout
+	pop %ecx		// 2nd param: address of string
+	pop %edx		// 3rd param: length of string
+
+	mov $__NR_write,%eax	// write syscall
+	int $0x80
+
 	NEXT
 
 	// COLD must not return (ie. must not call EXIT).
