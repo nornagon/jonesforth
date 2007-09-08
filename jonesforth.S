@@ -1,5 +1,6 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
+	This is PUBLIC DOMAIN (see public domain release statement below).
 
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
 
@@ -68,6 +69,13 @@
 
 	Also I used this document (http://ftp.funet.fi/pub/doc/IOCCC/1992/buzzard.2.design) which really
 	defies easy explanation.
+
+	PUBLIC DOMAIN ----------------------------------------------------------------------
+
+	I, the copyright holder of this work, hereby release it into the public domain. This applies worldwide.
+
+	In case this is not legally possible, I grant any entity the right to use this work for any purpose,
+	without any conditions, unless such conditions are required by law.
 
 	SETTING UP ----------------------------------------------------------------------
 
