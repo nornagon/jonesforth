@@ -351,13 +351,14 @@
 	the definitions.  In FORTH this is sometimes called the "codeword".  The codeword is
 	a pointer to the interpreter to run the function.  For primitives written in
 	assembly language, the "interpreter" just points to the actual assembly code itself.
+	They don't need interpreting, they just run.
 
 	In words written in FORTH (like QUADRUPLE and DOUBLE), the codeword points to an interpreter
 	function.
 
 	I'll show you the interpreter function shortly, but let's recall our indirect
 	JMP *(%eax) with the "extra" brackets.  Take the case where we're executing DOUBLE
-	as shown, and DUP has been called.  Note that %esi is pointing to the address of +.
+	as shown, and DUP has been called.  Note that %esi is pointing to the address of +
 
 	The assembly code for DUP eventually does a NEXT.  That:
 
@@ -433,7 +434,9 @@
 	We will use the i386's "other" stack pointer (%ebp, usually called the "frame pointer")
 	for our return stack.
 
-	I've got two macros which just wrap up the details of using %ebp for the return stack:
+	I've got two macros which just wrap up the details of using %ebp for the return stack.
+	You use them as for example "PUSHRSP %eax" (push %eax on the return stack) or "POPRSP %ebx"
+	(pop top of return stack into %ebx).
 */
 
 /* Macros to deal with the return stack. */
@@ -494,8 +497,8 @@ DOCOL:
 		| codeword         |
 		+------------------+		   DOUBLE:
 		| addr of DOUBLE  ---------------> +------------------+
-		+------------------+               | addr of DOCOL    |
-		| addr of DOUBLE   |		   +------------------+
+top of return	+------------------+       %eax -> | addr of DOCOL    |
+stack points ->	| addr of DOUBLE   |	   + 4 =   +------------------+
 		+------------------+	   %esi -> | addr of DUP   -------------->
 		| addr of EXIT	   |		   +------------------+
 		+------------------+               | etc.             |
@@ -510,10 +513,20 @@ DOCOL:
 	text segment starting at address 0, DOCOL has address 0.  So if you are disassembling the
 	code and see a word with a codeword of 0, you will immediately know that the word is
 	written in FORTH (it's not an assembler primitive) and so uses DOCOL as the interpreter.
+
+	STARTING UP ----------------------------------------------------------------------
+
+	Now let's get down to nuts and bolts.  When we start the program we need to set up
+	a few things like the return stack.  But as soon as we can, we want to jump into FORTH
+	code (albeit much of the "early" FORTH code will still need to be written as
+	assembly language primitives).
+
+	This is what the set up code does.  Does a tiny bit of house-keeping, sets up the
+	separate return stack (NB: Linux gives us the ordinary parameter stack already), then
+	immediately jumps to a FORTH word called COLD.  COLD stands for cold-start.  In ISO
+	FORTH (but not in this FORTH), COLD can be called at any time to completely reset
+	the state of FORTH, and there is another word called WARM which does a partial reset.
 */
-
-
-
 
 /* ELF entry point. */
 	.text
@@ -530,16 +543,18 @@ _start:
 cold_start:			// High-level code without a codeword.
 	.int COLD
 
-/*----------------------------------------------------------------------
- * Fixed sized buffers for everything.
- */
-	.bss
+/*
+	We also allocate some space for the return stack and some space to store user
+	definitions.  These are static memory allocations using fixed-size buffers, but it
+	wouldn't be a great deal of work to make them dynamic.
+*/
 
+	.bss
 /* FORTH return stack. */
 #define RETURN_STACK_SIZE 8192
 	.align 4096
 	.space RETURN_STACK_SIZE
-return_stack:
+return_stack:			// Initial top of return stack.
 
 /* Space for user-defined words. */
 #define USER_DEFS_SIZE 16384
@@ -547,19 +562,88 @@ return_stack:
 user_defs_start:
 	.space USER_DEFS_SIZE
 
+/*
+	BUILT-IN WORDS ----------------------------------------------------------------------
 
+	Remember our dictionary entries (headers).  Let's bring those together with the codeword
+	and data words to see how : DOUBLE DUP + ; really looks in memory.
 
+	  pointer to previous word
+	   ^
+	   |
+	+--|------+---+---+---+---+---+---+---+---+------------+------------+------------+------------+
+	| LINK    | 6 | D | O | U | B | L | E | 0 | DOCOL      | DUP        | +          | EXIT       |
+	+---------+---+---+---+---+---+---+---+---+------------+--|---------+------------+------------+
+           ^       len                         pad  codeword      |
+	   |							  V
+	  LINK in next word				points to codeword of DUP
+	
+	Initially we can't just write ": DOUBLE DUP + ;" (ie. that literal string) here because we
+	don't yet have anything to read the string, break it up at spaces, parse each word, etc. etc.
+	So instead we will have to define built-in words using the GNU assembler data constructors
+	(like .int, .byte, .string, .ascii and so on -- look them up in the gas info page if you are
+	unsure of them).
 
+	The long way would be:
+	.int <link to previous word>
+	.byte 6			// len
+	.ascii "DOUBLE"		// string
+	.byte 0			// padding
+DOUBLE: .int DOCOL		// codeword
+	.int DUP		// pointer to codeword of DUP
+	.int PLUS		// pointer to codeword of +
+	.int EXIT		// pointer to codeword of EXIT
 
+	That's going to get quite tedious rather quickly, so here I define an assembler macro
+	so that I can just write:
 
-/*----------------------------------------------------------------------
- * Built-in words defined the long way.
- */
-#define F_IMMED 0x80
-#define F_HIDDEN 0x20
+	defword "DOUBLE",6,,DOUBLE
+	.int DUP,PLUS,EXIT
+
+	and I'll get exactly the same effect.
+
+	Don't worry too much about the exact implementation details of this macro - it's complicated!
+*/
 
 	// Store the chain of links.
 	.set link,0
+
+	.macro defword name, namelen, flags=0, label
+	.section .rodata
+	.align 4
+	.globl name_\label
+name_\label :
+	.int link		// link
+	.set link,name_\label
+	.byte \flags+\namelen	// flags + length byte
+	.ascii "\name"		// the name
+	.align 4
+	.globl \label
+\label :
+	.int DOCOL		// codeword - the interpreter
+	// list of word pointers follow
+	.endm
+
+/*
+	Similarly I want a way to write words written in assembly language.  There will quite a few
+	of these to start with because, well, everything has to start in assembly before there's
+	enough "infrastructure" to be able to start writing FORTH words, but also I want to define
+	some common FORTH words in assembly language for speed, even though I could write them in FORTH.
+
+	This is what DUP looks like in memory:
+
+	  pointer to previous word
+	   ^
+	   |
+	+--|------+---+---+---+---+------------+
+	| LINK    | 3 | D | U | P | code_DUP ---------------------> points to the assembly
+	+---------+---+---+---+---+------------+		    code used to write DUP,
+           ^       len              codeword			    which is ended with NEXT.
+	   |
+	  LINK in next word
+
+	Again, for brevity in writing the header I'm going to use an assembler macro called defcode.
+*/
 
 	.macro defcode name, namelen, flags=0, label
 	.section .rodata
@@ -580,41 +664,20 @@ name_\label :
 code_\label :			// assembler code follows
 	.endm
 
-	.macro defword name, namelen, flags=0, label
-	.section .rodata
-	.align 4
-	.globl name_\label
-name_\label :
-	.int link		// link
-	.set link,name_\label
-	.byte \flags+\namelen	// flags + length byte
-	.ascii "\name"		// the name
-	.align 4
-	.globl \label
-\label :
-	.int DOCOL		// codeword - the interpreter
-	// list of word pointers follow
-	.endm
-
-	.macro defvar name, namelen, flags=0, label, initial=0
-	defcode \name,\namelen,\flags,\label
-	push $var_\name
-	NEXT
-	.data
-	.align 4
-var_\name :
-	.int \initial
-	.endm
-
-	// Some easy ones, written in assembly for speed
-	defcode "DROP",4,,DROP
-	pop %eax		// drop top of stack
-	NEXT
+/*
+	Now some easy FORTH primitives.  These are written in assembly for speed.  If you understand
+	i386 assembly language then it is worth reading these.  However if you don't understand assembly
+	you can skip the details.
+*/
 
 	defcode "DUP",3,,DUP
 	pop %eax		// duplicate top of stack
 	push %eax
 	push %eax
+	NEXT
+
+	defcode "DROP",4,,DROP
+	pop %eax		// drop top of stack
 	NEXT
 
 	defcode "SWAP",4,,SWAP
@@ -739,6 +802,10 @@ var_\name :
 	notl (%esp)
 	NEXT
 
+/* Flags. */
+#define F_IMMED 0x80
+#define F_HIDDEN 0x20
+
 	// COLD must not return (ie. must not call EXIT).
 	defword "COLD",4,,COLD
 	// XXX reinitialisation of the interpreter
@@ -818,6 +885,16 @@ var_\name :
 	movb (%ebx),%al		// fetch it
 	push %eax		// push value onto stack
 	NEXT
+
+	.macro defvar name, namelen, flags=0, label, initial=0
+	defcode \name,\namelen,\flags,\label
+	push $var_\name
+	NEXT
+	.data
+	.align 4
+var_\name :
+	.int \initial
+	.endm
 
 	// The STATE variable is 0 for execute mode, != 0 for compile mode
 	defvar "STATE",5,,STATE
