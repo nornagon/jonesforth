@@ -1,11 +1,11 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 	This is PUBLIC DOMAIN (see public domain release statement below).
-	$Id: jonesforth.S,v 1.19 2007-09-08 22:51:28 rich Exp $
+	$Id: jonesforth.S,v 1.20 2007-09-15 11:21:09 rich Exp $
 
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
 */
-	.set JONES_VERSION,19
+	.set JONES_VERSION,20
 /*
 	INTRODUCTION ----------------------------------------------------------------------
 
@@ -64,6 +64,8 @@
 	http://wiki.laptop.org/go/Forth_Lessons
 
 	Here is another "Why FORTH?" essay: http://www.jwdt.com/~paysan/why-forth.html
+
+	Discussion and criticism of this FORTH here: http://lambda-the-ultimate.org/node/2452
 
 	ACKNOWLEDGEMENTS ----------------------------------------------------------------------
 
@@ -202,7 +204,7 @@
            |
 	  LATEST
 
-	You shoud be able to see from this how you might implement functions to find a word in
+	You should be able to see from this how you might implement functions to find a word in
 	the dictionary (just walk along the dictionary entries starting at LATEST and matching
 	the names until you either find a match or hit the NULL pointer at the end of the dictionary);
 	and add a word to the dictionary (create a new definition, set its LINK to LATEST, and set
@@ -1481,7 +1483,7 @@ _TCFA:
 	IMMEDIATE flag (F_IMMED in this code).  If a word in the dictionary is flagged as
 	IMMEDIATE then the interpreter runs it immediately _even if it's in compile mode_.
 
-	I hope I don't need to explain that ; (SEMICOLON) just such a word, flagged as IMMEDIATE.
+	I hope I don't need to explain that ; (SEMICOLON) is just such a word, flagged as IMMEDIATE.
 	And all it does is append the codeword for EXIT on to the current definition and switch
 	back to immediate mode (set STATE back to 0).  Shortly we'll see the actual definition
 	of ; and we'll see that it's really a very simple definition, declared IMMEDIATE.
@@ -1663,7 +1665,7 @@ _HIDDEN:
 	BRANCH is an unconditional branch. 0BRANCH is a conditional branch (it only branches if the
 	top of stack is zero).
 
-	The diagra below shows how BRANCH works in some imaginary compiled word.  When BRANCH executes,
+	The diagram below shows how BRANCH works in some imaginary compiled word.  When BRANCH executes,
 	%esi starts by pointing to the offset field (compare to LIT above):
 
 	+---------------------+-------+---- - - ---+------------+------------+---- - - - ----+------------+
