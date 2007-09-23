@@ -1,11 +1,11 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 	This is PUBLIC DOMAIN (see public domain release statement below).
-	$Id: jonesforth.S,v 1.21 2007-09-23 11:00:30 rich Exp $
+	$Id: jonesforth.S,v 1.22 2007-09-23 19:40:40 rich Exp $
 
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
 */
-	.set JONES_VERSION,20
+	.set JONES_VERSION,22
 /*
 	INTRODUCTION ----------------------------------------------------------------------
 
@@ -258,6 +258,8 @@
 	08 00 00 00		Just the function addresses, without
 	1C 00 00 00		the CALL prefix.
 	2C 00 00 00
+
+	On a 16-bit machine like the ones which originally ran FORTH the savings are even greater - 33%.
 
 	[Historical note: If the execution model that FORTH uses looks strange from the following
 	paragraphs, then it was motivated entirely by the need to save memory on early computers.
@@ -582,7 +584,7 @@ cold_start:			// High-level code without a codeword.
 	.space RETURN_STACK_SIZE
 return_stack:			// Initial top of return stack.
 
-/* Space for user-defined words. */
+/* The user definitions area: space for user-defined words and general memory allocations. */
 #define USER_DEFS_SIZE 16384
 	.align 4096
 user_defs_start:
@@ -634,6 +636,7 @@ DOUBLE: .int DOCOL		// codeword
 /* Flags - these are discussed later. */
 #define F_IMMED 0x80
 #define F_HIDDEN 0x20
+#define F_LENMASK 0x1f		// length mask
 
 	// Store the chain of links.
 	.set link,0
@@ -809,10 +812,95 @@ code_\label :			// assembler code follows
 1:	pushl $0
 	NEXT
 
+	defcode "<",1,,LT
+	pop %eax
+	pop %ebx
+	cmp %eax,%ebx
+	jl 1f
+	pushl $0
+	NEXT
+1:	pushl $1
+	NEXT
+
+	defcode ">",1,,GT
+	pop %eax
+	pop %ebx
+	cmp %eax,%ebx
+	jg 1f
+	pushl $0
+	NEXT
+1:	pushl $1
+	NEXT
+
+	defcode "<=",2,,LE
+	pop %eax
+	pop %ebx
+	cmp %eax,%ebx
+	jle 1f
+	pushl $0
+	NEXT
+1:	pushl $1
+	NEXT
+
+	defcode ">=",2,,GE
+	pop %eax
+	pop %ebx
+	cmp %eax,%ebx
+	jge 1f
+	pushl $0
+	NEXT
+1:	pushl $1
+	NEXT
+
 	defcode "0=",2,,ZEQU	// top of stack equals 0?
 	pop %eax
 	test %eax,%eax
 	jz 1f
+	pushl $0
+	NEXT
+1:	pushl $1
+	NEXT
+
+	defcode "0<>",3,,ZNEQU	// top of stack not 0?
+	pop %eax
+	test %eax,%eax
+	jnz 1f
+	pushl $0
+	NEXT
+1:	pushl $1
+	NEXT
+
+	defcode "0<",2,,ZLT
+	pop %eax
+	test %eax,%eax
+	jl 1f
+	pushl $0
+	NEXT
+1:	pushl $1
+	NEXT
+
+	defcode "0>",2,,ZGT
+	pop %eax
+	test %eax,%eax
+	jg 1f
+	pushl $0
+	NEXT
+1:	pushl $1
+	NEXT
+
+	defcode "0<=",3,,ZLE
+	pop %eax
+	test %eax,%eax
+	jle 1f
+	pushl $0
+	NEXT
+1:	pushl $1
+	NEXT
+
+	defcode "0>=",3,,ZGE
+	pop %eax
+	test %eax,%eax
+	jge 1f
 	pushl $0
 	NEXT
 1:	pushl $1
@@ -826,6 +914,11 @@ code_\label :			// assembler code follows
 	defcode "OR",2,,OR
 	pop %eax
 	orl %eax,(%esp)
+	NEXT
+
+	defcode "XOR",3,,XOR
+	pop %eax
+	xorl %eax,(%esp)
 	NEXT
 
 	defcode "INVERT",6,,INVERT // this is the FORTH "NOT" function
@@ -998,8 +1091,6 @@ var_\name :
 	_Y
 	_Z
 	S0		Stores the address of the top of the parameter stack.
-	R0		Stores the address of the top of the return stack.
-	VERSION		Is the current version of this FORTH.
 
 */
 	defvar "STATE",5,,STATE
@@ -1009,8 +1100,35 @@ var_\name :
 	defvar "_Y",2,,TY
 	defvar "_Z",2,,TZ
 	defvar "S0",2,,SZ
-	defvar "R0",2,,RZ,return_stack
-	defvar "VERSION",7,,VERSION,JONES_VERSION
+
+/*
+	BUILT-IN CONSTANTS ----------------------------------------------------------------------
+
+	It's also useful to expose a few constants to FORTH.  When the word is executed it pushes a
+	constant value on the stack.
+
+	The built-in constants are:
+
+	VERSION		Is the current version of this FORTH.
+	R0		The address of the top of the return stack.
+	DOCOL		Pointer to DOCOL.
+	F_IMMED		The IMMEDIATE flag's actual value.
+	F_HIDDEN	The HIDDEN flag's actual value.
+	F_LENMASK	The length mask.
+*/
+
+	.macro defconst name, namelen, flags=0, label, value
+	defcode \name,\namelen,\flags,\label
+	push $\value
+	NEXT
+	.endm
+
+	defconst "VERSION",7,,VERSION,JONES_VERSION
+	defconst "R0",2,,RZ,return_stack
+	defconst "DOCOL",5,,__DOCOL,DOCOL
+	defconst "F_IMMED",7,,__F_IMMED,F_IMMED
+	defconst "F_HIDDEN",8,,__F_HIDDEN,F_HIDDEN
+	defconst "F_LENMASK",9,,__F_LENMASK,F_LENMASK
 
 /*
 	RETURN STACK ----------------------------------------------------------------------
@@ -1291,7 +1409,7 @@ _SNUMBER:
 	| LINK    | 6 | D | O | U | B | L | E | 0 | DOCOL      | DUP        | +          | EXIT       |
 	+---------+---+---+---+---+---+---+---+---+------------+------------+------------+------------+
 
-	See also >CFA which takes a dictionary entry pointer and returns a pointer to the codeword.
+	See also >CFA and >DFA.
 
 	FIND doesn't find dictionary entries which are flagged as HIDDEN.  See below for why.
 */
@@ -1317,7 +1435,7 @@ _FIND:
 	// this won't pick the word (the length will appear to be wrong).
 	xor %eax,%eax
 	movb 4(%edx),%al	// %al = flags+length field
-	andb $(F_HIDDEN|0x1f),%al // %al = name length
+	andb $(F_HIDDEN|F_LENMASK),%al // %al = name length
 	cmpb %cl,%al		// Length is the same?
 	jne 2f
 
@@ -1383,11 +1501,36 @@ _TCFA:
 	add $4,%edi		// Skip link pointer.
 	movb (%edi),%al		// Load flags+len into %al.
 	inc %edi		// Skip flags+len byte.
-	andb $0x1f,%al		// Just the length, not the flags.
+	andb $F_LENMASK,%al	// Just the length, not the flags.
 	add %eax,%edi		// Skip the name.
 	addl $3,%edi		// The codeword is 4-byte aligned.
 	andl $~3,%edi
 	ret
+
+/*
+	Related to >CFA is >DFA which takes a dictionary entry address as returned by FIND and
+	returns a pointer to the first data field.
+
+	FIND returns a pointer to this
+	|				>CFA converts it to a pointer to this
+	|					   |
+	|					   |	>DFA converts it to a pointer to this
+	|					   |		 |
+	V					   V		 V
+	+---------+---+---+---+---+---+---+---+---+------------+------------+------------+------------+
+	| LINK    | 6 | D | O | U | B | L | E | 0 | DOCOL      | DUP        | +          | EXIT       |
+	+---------+---+---+---+---+---+---+---+---+------------+------------+------------+------------+
+
+	(Note to those following the source of FIG-FORTH / ciforth: My >DFA definition is
+	different from theirs, because they have an extra indirection).
+
+	You can see that >DFA is easily defined in FORTH just by adding 4 to the result of >CFA.
+*/
+
+	defword ">DFA",4,,TDFA
+	.int TCFA		// >CFA		(get code field address)
+	.int INCR4		// 4+		(add 4 to it to get to next word)
+	.int EXIT		// EXIT		(return from FORTH word)
 
 /*
 	COMPILING ----------------------------------------------------------------------
@@ -1454,10 +1597,10 @@ _TCFA:
 	: DOUBLE DUP + ;
 	         ^
 		 |
-		Next byte returned by KEY
+		Next byte returned by KEY will be the 'D' character of DUP
 
-	so the interpreter (now it's in compile mode, so I guess it's really the compiler) reads DUP,
-	gets its codeword pointer, and appends it:
+	so the interpreter (now it's in compile mode, so I guess it's really the compiler) reads "DUP",
+	looks it up in the dictionary, gets its codeword pointer, and appends it:
 
 									     +-- HERE updated to point here.
 									     |
@@ -1485,7 +1628,7 @@ _TCFA:
 	IMMEDIATE flag (F_IMMED in this code).  If a word in the dictionary is flagged as
 	IMMEDIATE then the interpreter runs it immediately _even if it's in compile mode_.
 
-	I hope I don't need to explain that ; (SEMICOLON) is just such a word, flagged as IMMEDIATE.
+	This is how the word ; (SEMICOLON) works -- as a word flagged in the dictionary as IMMEDIATE.
 	And all it does is append the codeword for EXIT on to the current definition and switch
 	back to immediate mode (set STATE back to 0).  Shortly we'll see the actual definition
 	of ; and we'll see that it's really a very simple definition, declared IMMEDIATE.
@@ -1511,21 +1654,47 @@ _TCFA:
 	being compiled.  This prevents FIND from finding it, and thus in theory stops any
 	chance of it being called.
 
-	Compared to the description above, the actual definition of : (COLON) is comparatively simple:
+	The above explains how compiling, : (COLON) and ; (SEMICOLON) works and in a moment I'm
+	going to define them.  The : (COLON) function can be made a little bit more general by writing
+	it in two parts.  The first part, called CREATE, makes just the header:
+
+						   +-- Afterwards, HERE points here.
+						   |
+						   V
+	+---------+---+---+---+---+---+---+---+---+
+	| LINK    | 6 | D | O | U | B | L | E | 0 |
+	+---------+---+---+---+---+---+---+---+---+
+                   len                         pad
+
+	and the second part, the actual definition of : (COLON), calls CREATE and appends the
+	DOCOL codeword, so leaving:
+
+								+-- Afterwards, HERE points here.
+								|
+								V
+	+---------+---+---+---+---+---+---+---+---+------------+
+	| LINK    | 6 | D | O | U | B | L | E | 0 | DOCOL      |
+	+---------+---+---+---+---+---+---+---+---+------------+
+                   len                         pad  codeword
+
+	CREATE is a standard FORTH word and the advantage of this split is that we can reuse it to
+	create other types of words (not just ones which contain code, but words which contain variables,
+	constants and other data).
 */
 
-	defcode ":",1,,COLON
+	defcode "CREATE",6,,CREATE
 
-	// Get the word and create a dictionary entry header for it.
+	// Get the word.
 	call _WORD		// Returns %ecx = length, %edi = pointer to word.
 	mov %edi,%ebx		// %ebx = address of the word
 
+	// Link pointer.
 	movl var_HERE,%edi	// %edi is the address of the header
 	movl var_LATEST,%eax	// Get link pointer
 	stosl			// and store it in the header.
 
+	// Length byte and the word itself.
 	mov %cl,%al		// Get the length.
-	orb $F_HIDDEN,%al	// Set the HIDDEN flag on this entry.
 	stosb			// Store the length/flags byte.
 	push %esi
 	mov %ebx,%esi		// %esi = word
@@ -1534,22 +1703,33 @@ _TCFA:
 	addl $3,%edi		// Align to next 4 byte boundary.
 	andl $~3,%edi
 
-	movl $DOCOL,%eax	// The codeword for user-created words is always DOCOL (the interpreter)
-	stosl
-
-	// Header built, so now update LATEST and HERE.
-	// We'll be compiling words and putting them HERE.
+	// Update LATEST and HERE.
 	movl var_HERE,%eax
 	movl %eax,var_LATEST
 	movl %edi,var_HERE
-
-	// And go into compile mode by setting STATE to 1.
-	movl $1,var_STATE
 	NEXT
 
 /*
-	, (COMMA) is a standard FORTH word which appends a 32 bit integer (normally a codeword
-	pointer) to the user data area pointed to by HERE, and adds 4 to HERE.
+	Because I want to define : (COLON) in FORTH, not assembler, we need a few more FORTH words
+	to use.
+
+	The first is , (COMMA) which is a standard FORTH word which appends a 32 bit integer to the user
+	data area pointed to by HERE, and adds 4 to HERE.  So the action of , (COMMA) is:
+
+							previous value of HERE
+								 |
+								 V
+	+---------+---+---+---+---+---+---+---+---+-- - - - - --+------------+
+	| LINK    | 6 | D | O | U | B | L | E | 0 |             |  <data>    |
+	+---------+---+---+---+---+---+---+---+---+-- - - - - --+------------+
+                   len                         pad		              ^
+									      |
+									new value of HERE
+
+	and <data> is whatever 32 bit integer was at the top of the stack.
+
+	, (COMMA) is quite a fundamental operation when compiling.  It is used to append codewords
+	to the current word that is being compiled.
 */
 
 	defcode ",",1,,COMMA
@@ -1563,16 +1743,54 @@ _COMMA:
 	ret
 
 /*
+	Our definitions of : (COLON) and ; (SEMICOLON) will need to switch to and from compile mode.
+
+	Immediate mode vs. compile mode is stored in the global variable STATE, and by updating this
+	variable we can switch between the two modes.
+
+	For various reasons which may become apparent later, FORTH defines two standard words called
+	[ and ] (LBRAC and RBRAC) which switch between modes:
+
+	Word	Assembler	Action		Effect
+	[	LBRAC		STATE := 0	Switch to immediate mode.
+	]	RBRAC		STATE := 1	Switch to compile mode.
+
+	[ (LBRAC) is an IMMEDIATE word.  The reason is as follows: If we are in compile mode and the
+	interpreter saw [ then it would compile it rather than running it.  We would never be able to
+	switch back to immediate mode!  So we flag the word as IMMEDIATE so that even in compile mode
+	the word runs immediately, switching us back to immediate mode.
+*/
+
+	defcode "[",1,F_IMMED,LBRAC
+	xor %eax,%eax
+	movl %eax,var_STATE	// Set STATE to 0.
+	NEXT
+
+	defcode "]",1,,RBRAC
+	movl $1,var_STATE	// Set STATE to 1.
+	NEXT
+
+/*
+	Now we can define : (COLON) using CREATE.  It just calls CREATE, appends DOCOL (the codeword), sets
+	the word HIDDEN and goes into compile mode.
+*/
+
+	defword ":",1,,COLON
+	.int CREATE		// CREATE the dictionary entry / header
+	.int LIT, DOCOL, COMMA	// Append DOCOL  (the codeword).
+	.int HIDDEN		// Make the word hidden (see below for definition).
+	.int RBRAC		// Go into compile mode.
+	.int EXIT		// Return from the function.
+
+/*
 	; (SEMICOLON) is also elegantly simple.  Notice the F_IMMED flag.
 */
 
-	defcode ";",1,F_IMMED,SEMICOLON
-	movl $EXIT,%eax		// EXIT is the final codeword in compiled words.
-	call _COMMA		// Store it.
-	call _HIDDEN		// Toggle the HIDDEN flag (unhides the new word).
-	xor %eax,%eax		// Set STATE to 0 (back to execute mode).
-	movl %eax,var_STATE
-	NEXT
+	defword ";",1,F_IMMED,SEMICOLON
+	.int LIT, EXIT, COMMA	// Append EXIT (so the word will return).
+	.int HIDDEN		// Toggle hidden flag -- unhide the word (see below for definition).
+	.int LBRAC		// Go back to IMMEDIATE mode.
+	.int EXIT		// Return from the function.
 
 /*
 	EXTENDING THE COMPILER ----------------------------------------------------------------------
@@ -1581,7 +1799,7 @@ _COMMA:
 	your own IMMEDIATE words too, and this is a crucial aspect when extending basic FORTH, because
 	it allows you in effect to extend the compiler itself.  Does gcc let you do that?
 
-	Standard FORTH words like IF, WHILE, .", [ and so on are all written as extensions to the basic
+	Standard FORTH words like IF, WHILE, ." and so on are all written as extensions to the basic
 	compiler, and are all IMMEDIATE words.
 
 	The IMMEDIATE word toggles the F_IMMED (IMMEDIATE flag) on the most recently defined word,
@@ -1603,27 +1821,22 @@ _COMMA:
 */
 
 	defcode "IMMEDIATE",9,F_IMMED,IMMEDIATE
-	call _IMMEDIATE
-	NEXT
-_IMMEDIATE:
 	movl var_LATEST,%edi	// LATEST word.
 	addl $4,%edi		// Point to name/flags byte.
 	xorb $F_IMMED,(%edi)	// Toggle the IMMED bit.
-	ret
+	NEXT
 
 /*
 	HIDDEN toggles the other flag, F_HIDDEN, of the latest word.  Note that words flagged
-	as hidden are defined but cannot be called, so this is rarely used.
+	as hidden are defined but cannot be called, so this is only used when you are trying to
+	hide the word as it is being defined.
 */
 
 	defcode "HIDDEN",6,,HIDDEN
-	call _HIDDEN
-	NEXT
-_HIDDEN:
 	movl var_LATEST,%edi	// LATEST word.
 	addl $4,%edi		// Point to name/flags byte.
 	xorb $F_HIDDEN,(%edi)	// Toggle the HIDDEN bit.
-	ret
+	NEXT
 
 /*
 	' (TICK) is a standard FORTH word which returns the codeword pointer of the next word.
@@ -1743,7 +1956,6 @@ _HIDDEN:
 	description -- see: http://en.wikipedia.org/wiki/REPL).
 */
 
-
 	// COLD must not return (ie. must not call EXIT).
 	defword "COLD",4,,COLD
 	.int INTERPRETER	// call the interpreter loop (never returns)
@@ -1822,6 +2034,10 @@ interpret_is_lit:
 	CHAR A puts 65 on the stack.
 
 	SYSEXIT exits the process using Linux exit syscall.
+
+	In this FORTH, SYSEXIT must be the last word in the built-in (assembler) dictionary because we
+	initialise the LATEST variable to point to it.  This means that if you want to extend the assembler
+	part, you must put new words before SYSEXIT, or else change how LATEST is initialised.
 */
 
 	defcode "CHAR",4,,CHAR
@@ -1874,18 +2090,12 @@ buffer:
 \\ Define some character constants
 : '\\n'   10 ;
 : 'SPACE' 32 ;
-: '\"'    34 ;
-: ':'     58 ;
 
 \\ CR prints a carriage return
 : CR '\\n' EMIT ;
 
 \\ SPACE prints a space
 : SPACE 'SPACE' EMIT ;
-
-\\ Primitive . (DOT) function doesn't follow with a blank, so redefine it to behave like FORTH.
-\\ Notice how we can trivially redefine existing functions.
-: . . SPACE ;
 
 \\ DUP, DROP are defined in assembly for speed, but this is how you might define them
 \\ in FORTH.  Notice use of the scratch variables _X and _Y.
@@ -1901,14 +2111,12 @@ buffer:
 : 2* 2 * ;
 : 2/ 2 / ;
 
-\\ [ and ] allow you to break into immediate mode while compiling a word.
-: [ IMMEDIATE		\\ define [ as an immediate word
-	0 STATE !	\\ go into immediate mode
-	;
-
-: ]
-	1 STATE !	\\ go back to compile mode
-	;
+\\ The primitive . (DOT) function doesn't follow with a blank, so redefine it to behave like FORTH.
+\\ Notice how we can trivially redefine existing words.  Word definitions are not recursive by
+\\ default, but see below for the RECURSE word.
+: .
+	. SPACE		\\ call built-in DOT, then print a space.
+;
 
 \\ LITERAL takes whatever is on the stack and compiles LIT <foo>
 : LITERAL IMMEDIATE
@@ -1916,14 +2124,35 @@ buffer:
 	,		\\ compile the literal itself (from the stack)
 	;
 
+\\ Now we can use [ and ] to insert literals which are calculated at compile time.
+\\ Within definitions, use [ ... ] LITERAL anywhere that '...' is a constant expression which you
+\\ would rather only compute once (at compile time, rather than calculating it each time your word runs).
+: ':'
+	[		\\ go into immediate mode temporarily
+	CHAR :		\\ push the number 58 (ASCII code of colon) on the stack
+	]		\\ go back to compile mode
+	LITERAL		\\ compile LIT 58 as the definition of ':' word
+;
+
+\\ A few more character constants defined the same way as above.
+: '(' [ CHAR ( ] LITERAL ;
+: ')' [ CHAR ) ] LITERAL ;
+: '\"' [ CHAR \" ] LITERAL ;
+
+\\ So far we have defined only very simple definitions.  Before we can go further, we really need to
+\\ make some control structures, like IF ... THEN and loops.  Luckily we can define arbitrary control
+\\ structures directly in FORTH.
+\\
+\\ Please note that the control structures as I have defined them here will only work inside compiled
+\\ words.  If you try to type in expressions using IF, etc. in immediate mode, then they won't work.
+\\ Making these work in immediate mode is left as an exercise for the reader.
+
 \\ condition IF true-part THEN rest
-\\   compiles to:
-\\ condition 0BRANCH OFFSET true-part rest
-\\   where OFFSET is the offset of 'rest'
+\\	-- compiles to: --> condition 0BRANCH OFFSET true-part rest
+\\	where OFFSET is the offset of 'rest'
 \\ condition IF true-part ELSE false-part THEN
-\\   compiles to:
-\\ condition 0BRANCH OFFSET true-part BRANCH OFFSET2 false-part rest
-\\   where OFFSET if the offset of false-part and OFFSET2 is the offset of rest
+\\ 	-- compiles to: --> condition 0BRANCH OFFSET true-part BRANCH OFFSET2 false-part rest
+\\	where OFFSET if the offset of false-part and OFFSET2 is the offset of rest
 
 \\ IF is an IMMEDIATE word which compiles 0BRANCH followed by a dummy offset, and places
 \\ the address of the 0BRANCH on the stack.  Later when we see THEN, we pop that address
@@ -1951,9 +2180,8 @@ buffer:
 ;
 
 \\ BEGIN loop-part condition UNTIL
-\\   compiles to:
-\\ loop-part condition 0BRANCH OFFSET
-\\   where OFFSET points back to the loop-part
+\\	-- compiles to: --> loop-part condition 0BRANCH OFFSET
+\\	where OFFSET points back to the loop-part
 \\ This is like do { loop-part } while (condition) in the C language
 : BEGIN IMMEDIATE
 	HERE @		\\ save location on the stack
@@ -1966,9 +2194,8 @@ buffer:
 ;
 
 \\ BEGIN loop-part AGAIN
-\\   compiles to:
-\\ loop-part BRANCH OFFSET
-\\   where OFFSET points back to the loop-part
+\\	-- compiles to: --> loop-part BRANCH OFFSET
+\\	where OFFSET points back to the loop-part
 \\ In other words, an infinite loop which can only be returned from with EXIT
 : AGAIN IMMEDIATE
 	' BRANCH ,	\\ compile BRANCH
@@ -1977,9 +2204,8 @@ buffer:
 ;
 
 \\ BEGIN condition WHILE loop-part REPEAT
-\\   compiles to:
-\\ condition 0BRANCH OFFSET2 loop-part BRANCH OFFSET
-\\   where OFFSET points back to condition (the beginning) and OFFSET2 points to after the whole piece of code
+\\	-- compiles to: --> condition 0BRANCH OFFSET2 loop-part BRANCH OFFSET
+\\	where OFFSET points back to condition (the beginning) and OFFSET2 points to after the whole piece of code
 \\ So this is like a while (condition) { loop-part } loop in the C language
 : WHILE IMMEDIATE
 	' 0BRANCH ,	\\ compile 0BRANCH
@@ -1996,98 +2222,389 @@ buffer:
 	SWAP !		\\ and back-fill it in the original location
 ;
 
-\\ With the looping constructs, we can now write SPACES, which writes n spaces to stdout.
-: SPACES
+\\ FORTH allows ( ... ) as comments within function definitions.  This works by having an IMMEDIATE
+\\ word called ( which just drops input characters until it hits the corresponding ).
+: ( IMMEDIATE
+	1		\\ allowed nested parens by keeping track of depth
 	BEGIN
-		SPACE	\\ print a space
-		1-	\\ until we count down to 0
-		DUP 0=
-	UNTIL
+		KEY		\\ read next character
+		DUP '(' = IF	\\ open paren?
+			DROP		\\ drop the open paren
+			1+		\\ depth increases
+		ELSE
+			')' = IF	\\ close paren?
+				1-		\\ depth decreases
+			THEN
+		THEN
+	DUP 0= UNTIL		\\ continue until we reach matching close paren, depth 0
+	DROP		\\ drop the depth counter
 ;
 
-\\ .S prints the contents of the stack.  Very useful for debugging.
-: .S
-	DSP@		\\ get current stack pointer
+(
+	From now on we can use ( ... ) for comments.
+
+	In FORTH style we can also use ( ... -- ... ) to show the effects that a word has on the
+	parameter stack.  For example:
+
+	( n -- )	means that the word consumes an integer (n) from the parameter stack.
+	( b a -- c )	means that the word uses two integers (a and b, where a is at the top of stack)
+				and returns a single integer (c).
+	( -- )		means the word has no effect on the stack
+)
+
+( With the looping constructs, we can now write SPACES, which writes n spaces to stdout. )
+: SPACES	( n -- )
 	BEGIN
-		DUP @ .		\\ print the stack element
-		4+		\\ move up
-		DUP S0 @ 4- =	\\ stop when we get to the top
-	UNTIL
+		DUP 0>		( while n > 0 )
+	WHILE
+		SPACE		( print a space )
+		1-		( until we count down to 0 )
+	REPEAT
 	DROP
 ;
 
-\\ DEPTH returns the depth of the stack.
-: DEPTH S0 @ DSP@ - ;
+( .S prints the contents of the stack.  Very useful for debugging. )
+: .S		( -- )
+	DSP@		( get current stack pointer )
+	BEGIN
+		DUP S0 @ <
+	WHILE
+		DUP @ .		( print the stack element )
+		4+		( move up )
+	REPEAT
+	DROP
+;
 
-\\ .\" is the print string operator in FORTH.  Example: .\" Something to print\"
-\\ The space after the operator is the ordinary space required between words.
-\\ This is tricky to define because it has to do different things depending on whether
-\\ we are compiling or in immediate mode.  (Thus the word is marked IMMEDIATE so it can
-\\ detect this and do different things).
-\\ In immediate mode we just keep reading characters and printing them until we get to
-\\ the next double quote.
-\\ In compile mode we have the problem of where we're going to store the string (remember
-\\ that the input buffer where the string comes from may be overwritten by the time we
-\\ come round to running the function).  We store the string in the compiled function
-\\ like this:
-\\   ..., LITSTRING, string length, string rounded up to 4 bytes, EMITSTRING, ...
-: .\" IMMEDIATE
-	STATE @		\\ compiling?
-	IF
-		' LITSTRING ,	\\ compile LITSTRING
-		HERE @		\\ save the address of the length word on the stack
-		0 ,		\\ dummy length - we don't know what it is yet
+( DEPTH returns the depth of the stack. )
+: DEPTH		( -- n )
+	S0 @ DSP@ -
+	4-			( adjust because S0 was on the stack when we pushed DSP )
+;
+
+(
+	[NB. The following may be a bit confusing because of the need to use backslash before
+	each double quote character.  The backslashes are there to keep the assembler happy.
+	They are NOT part of the final output.  So here we are defining a function called
+	'dot double-quote' (not 'dot backslash double-quote').]
+
+	.\" is the print string operator in FORTH.  Example: .\" Something to print\"
+	The space after the operator is the ordinary space required between words.
+
+	This is tricky to define because it has to do different things depending on whether
+	we are compiling or in immediate mode.  (Thus the word is marked IMMEDIATE so it can
+	detect this and do different things).
+
+	In immediate mode we just keep reading characters and printing them until we get to
+	the next double quote.
+
+	In compile mode we have the problem of where we're going to store the string (remember
+	that the input buffer where the string comes from may be overwritten by the time we
+	come round to running the function).  We store the string in the compiled function
+	like this:
+	..., LITSTRING, string length, string rounded up to 4 bytes, EMITSTRING, ...
+)
+: .\" IMMEDIATE		( -- )
+	STATE @ IF	( compiling? )
+		' LITSTRING ,	( compile LITSTRING )
+		HERE @		( save the address of the length word on the stack )
+		0 ,		( dummy length - we don't know what it is yet )
 		BEGIN
-			KEY 		\\ get next character of the string
+			KEY 		( get next character of the string )
 			DUP '\"' <>
 		WHILE
-			HERE @ !b	\\ store the character in the compiled image
-			1 HERE +!	\\ increment HERE pointer by 1 byte
+			HERE @ !b	( store the character in the compiled image )
+			1 HERE +!	( increment HERE pointer by 1 byte )
 		REPEAT
-		DROP		\\ drop the double quote character at the end
-		DUP		\\ get the saved address of the length word
-		HERE @ SWAP -	\\ calculate the length
-		4-		\\ subtract 4 (because we measured from the start of the length word)
-		SWAP !		\\ and back-fill the length location
-		HERE @		\\ round up to next multiple of 4 bytes for the remaining code
+		DROP		( drop the double quote character at the end )
+		DUP		( get the saved address of the length word )
+		HERE @ SWAP -	( calculate the length )
+		4-		( subtract 4 (because we measured from the start of the length word) )
+		SWAP !		( and back-fill the length location )
+		HERE @		( round up to next multiple of 4 bytes for the remaining code )
 		3 +
 		3 INVERT AND
 		HERE !
-		' EMITSTRING ,	\\ compile the final EMITSTRING
+		' EMITSTRING ,	( compile the final EMITSTRING )
 	ELSE
-		\\ In immediate mode, just read characters and print them until we get
-		\\ to the ending double quote.  Much simpler than the above code!
+		( In immediate mode, just read characters and print them until we get
+		  to the ending double quote.  Much simpler than the above code! )
 		BEGIN
 			KEY
-			DUP '\"' = IF EXIT THEN
+			DUP '\"' = IF
+				DROP	( drop the double quote character )
+				EXIT	( return from this function )
+			THEN
 			EMIT
 		AGAIN
 	THEN
 ;
 
-\\ While compiling, [COMPILE] WORD compiles WORD if it would otherwise be IMMEDIATE.
+(
+	In FORTH, global constants and variables are defined like this:
+
+	10 CONSTANT TEN		when TEN is executed, it leaves the integer 10 on the stack
+	VARIABLE VAR		when VAR is executed, it leaves the address of VAR on the stack
+
+	Constants can be read by not written, eg:
+
+	TEN . CR		prints 10
+
+	You can read a variable (in this example called VAR) by doing:
+
+	VAR @			leaves the value of VAR on the stack
+	VAR @ . CR		prints the value of VAR
+
+	and update the variable by doing:
+
+	20 VAR !		sets VAR to 20
+
+	Note that variables are uninitialised (but see VALUE later on which provides initialised
+	variables with a slightly simpler syntax).
+
+	How can we define the words CONSTANT and VARIABLE?
+
+	The trick is to define a new word for the variable itself (eg. if the variable was called
+	'VAR' then we would define a new word called VAR).  This is easy to do because we exposed
+	dictionary entry creation through the CREATE word (part of the definition of : above).
+	A call to CREATE TEN leaves the dictionary entry:
+
+				   +--- HERE
+				   |
+				   V
+	+---------+---+---+---+---+
+	| LINK    | 3 | T | E | N |
+	+---------+---+---+---+---+
+                   len
+
+	For CONSTANT we can continue by appending DOCOL (the codeword), then LIT followed by
+	the constant itself and then EXIT, forming a little word definition that returns the
+	constant:
+
+	+---------+---+---+---+---+------------+------------+------------+------------+
+	| LINK    | 3 | T | E | N | DOCOL      | LIT        | 10         | EXIT       |
+	+---------+---+---+---+---+------------+------------+------------+------------+
+                   len              codeword
+
+	Notice that this word definition is exactly the same as you would have got if you had
+	written : TEN 10 ;
+)
+: CONSTANT
+	CREATE		( make the dictionary entry (the name follows CONSTANT) )
+	DOCOL ,		( append DOCOL (the codeword field of this word) )
+	' LIT ,		( append the codeword LIT )
+	,		( append the value on the top of the stack )
+	' EXIT ,	( append the codeword EXIT )
+;
+
+(
+	VARIABLE is a little bit harder because we need somewhere to put the variable.  There is
+	nothing particularly special about the 'user definitions area' (the area of memory pointed
+	to by HERE where we have previously just stored new word definitions).  We can slice off
+	bits of this memory area to store anything we want, so one possible definition of
+	VARIABLE might create this:
+
+	   +--------------------------------------------------------------+
+	   |								  |
+	   V								  |
+	+---------+---------+---+---+---+---+------------+------------+---|--------+------------+
+	| <var>   | LINK    | 3 | V | A | R | DOCOL      | LIT        | <addr var> | EXIT       |
+	+---------+---------+---+---+---+---+------------+------------+------------+------------+
+        		     len              codeword
+
+	where <var> is the place to store the variable, and <addr var> points back to it.
+
+	To make this more general let's define a couple of words which we can use to allocate
+	arbitrary memory from the user definitions area.
+
+	First ALLOT, where n ALLOT allocates n bytes of memory.  (Note when calling this that
+	it's a very good idea to make sure that n is a multiple of 4, or at least that next time
+	a word is compiled that n has been left as a multiple of 4).
+)
+: ALLOT		( n -- addr )
+	HERE @ SWAP	( here n -- )
+	HERE +!		( adds n to HERE, after this the old value of HERE is still on the stack )
+;
+
+(
+	Second, CELLS.  In FORTH the phrase 'n CELLS ALLOT' means allocate n integers of whatever size
+	is the natural size for integers on this machine architecture.  On this 32 bit machine therefore
+	CELLS just multiplies the top of stack by 4.
+)
+: CELLS 4 * ;
+
+(
+	So now we can define VARIABLE easily in much the same way as CONSTANT above.  Refer to the
+	diagram above to see what the word that this creates will look like.
+)
+: VARIABLE
+	1 CELLS ALLOT	( allocate 1 cell of memory, push the pointer to this memory )
+	CREATE		( make the dictionary entry (the name follows VARIABLE) )
+	DOCOL ,		( append DOCOL (the codeword field of this word) )
+	' LIT ,		( append the codeword LIT )
+	,		( append the pointer to the new memory )
+	' EXIT ,	( append the codeword EXIT )
+;
+
+(
+	VALUEs are like VARIABLEs but with a simpler syntax.  You would generally use them when you
+	want a variable which is read often, and written infrequently.
+
+	20 VALUE VAL 	creates VAL with initial value 20
+	VAL		pushes the value directly on the stack
+	30 TO VAL	updates VAL, setting it to 30
+
+	Notice that 'VAL' on its own doesn't return the address of the value, but the value itself,
+	making values simpler and more obvious to use than variables (no indirection through '@').
+	The price is a more complicated implementation, although despite the complexity there is no
+	particular performance penalty at runtime.
+
+	A naive implementation of 'TO' would be quite slow, involving a dictionary search each time.
+	But because this is FORTH we have complete control of the compiler so we can compile TO more
+	efficiently, turning:
+		TO VAL
+	into:
+		LIT <addr> !
+	and calculating <addr> (the address of the value) at compile time.
+
+	Now this is the clever bit.  We'll compile our value like this:
+
+	+---------+---+---+---+---+------------+------------+------------+------------+
+	| LINK    | 3 | V | A | L | DOCOL      | LIT        | <value>    | EXIT       |
+	+---------+---+---+---+---+------------+------------+------------+------------+
+                   len              codeword
+
+	where <value> is the actual value itself.  Note that when VAL executes, it will push the
+	value on the stack, which is what we want.
+
+	But what will TO use for the address <addr>?  Why of course a pointer to that <value>:
+
+		code compiled	- - - - --+------------+------------+------------+-- - - - -
+		by TO VAL		  | LIT        | <addr>     | !          |
+				- - - - --+------------+-----|------+------------+-- - - - -
+							     |
+							     V
+	+---------+---+---+---+---+------------+------------+------------+------------+
+	| LINK    | 3 | V | A | L | DOCOL      | LIT        | <value>    | EXIT       |
+	+---------+---+---+---+---+------------+------------+------------+------------+
+                   len              codeword
+
+	In other words, this is a kind of self-modifying code.
+
+	(Note to the people who want to modify this FORTH to add inlining: values defined this
+	way cannot be inlined).
+)
+: VALUE		( n -- )
+	CREATE		( make the dictionary entry (the name follows VALUE) )
+	DOCOL ,		( append DOCOL )
+	' LIT ,		( append the codeword LIT )
+	,		( append the initial value )
+	' EXIT ,	( append the codeword EXIT )
+;
+
+: TO IMMEDIATE	( n -- )
+	WORD		( get the name of the value )
+	FIND		( look it up in the dictionary )
+	>DFA		( get a pointer to the first data field (the 'LIT') )
+	4+		( increment to point at the value )
+	STATE @ IF	( compiling? )
+		' LIT ,		( compile LIT )
+		,		( compile the address of the value )
+		' ! ,		( compile ! )
+	ELSE		( immediate mode )
+		!		( update it straightaway )
+	THEN
+;
+
+(
+	ID. takes an address of a dictionary entry and prints the word's name.
+
+	For example: LATEST @ ID. would print the name of the last word that was defined.
+)
+: ID.
+	4+		( skip over the link pointer )
+	.S CR
+	DUP @b		( get the flags/length byte )
+	.S CR
+	F_LENMASK .S CR AND	( mask out the flags - just want the length )
+	.S CR
+
+	BEGIN
+		DUP 0>		( length > 0? )
+	WHILE
+		SWAP 1+		( addr len -- len addr+1 )
+		DUP @b		( len addr -- len addr char | get the next character)
+		.\" print: \" DUP . CR
+		EMIT		( len addr char -- len addr | and print it)
+		SWAP 1-		( len addr -- addr len-1    | subtract one from length )
+	REPEAT
+	DROP DROP	( len addr -- )
+;
+
+(
+	WORDS prints all the words defined in the dictionary, starting with the word defined most recently.
+
+	The implementation simply iterates backwards from LATEST using the link pointers.
+)
+	(
+: WORDS
+	LATEST @	( start at LATEST dictionary entry )
+	BEGIN
+		DUP @ 0<>	( while link pointer is not null )
+	WHILE
+		
+
+
+
+
+	REPEAT
+	DROP
+;	)
+
+(
+	So far we have only allocated words and memory.  FORTH provides a rather primitive method
+	to deallocate.
+
+	'FORGET word' deletes the definition of 'word' from the dictionary and everything defined
+	after it, including any variables and other memory allocated after.
+
+	The implementation is very simple - we look up the word (which returns the dictionary entry
+	address).  Then we set HERE to point to that address, so in effect all future allocations
+	and definitions will overwrite memory starting at the word.  We also need to set LATEST to
+	point to the previous word.
+
+	Note that you cannot FORGET built-in words (well, you can try but it will probably cause
+	a segfault).
+
+	XXX: Because we wrote VARIABLE to store the variable in memory allocated before the word,
+	in the current implementation VARIABLE FOO FORGET FOO will leak 1 cell of memory.
+)
+\\: FORGET
+	
+
+
+( While compiling, [COMPILE] WORD compiles WORD if it would otherwise be IMMEDIATE. )
 : [COMPILE] IMMEDIATE
-	WORD		\\ get the next word
-	FIND		\\ find it in the dictionary
-	>CFA		\\ get its codeword
-	,		\\ and compile that
+	WORD		( get the next word )
+	FIND		( find it in the dictionary )
+	>CFA		( get its codeword )
+	,		( and compile that )
 ;
 
-\\ RECURSE makes a recursive call to the current word that is being compiled.
-\\ Normally while a word is being compiled, it is marked HIDDEN so that references to the
-\\ same word within are calls to the previous definition of the word.
+(
+	RECURSE makes a recursive call to the current word that is being compiled.
+
+	Normally while a word is being compiled, it is marked HIDDEN so that references to the
+	same word within are calls to the previous definition of the word.  However we still have
+	access to the word which we are currently compiling through the LATEST pointer so we
+	can use that to compile a recursive call.
+)
 : RECURSE IMMEDIATE
-	LATEST @ >CFA	\\ LATEST points to the word being compiled at the moment
-	,		\\ compile it
+	LATEST @ >CFA	( LATEST points to the word being compiled at the moment )
+	,		( compile it )
 ;
 
-\\ ALLOT is used to allocate (static) memory when compiling.  It increases HERE by
-\\ the amount given on the stack.
-\\: ALLOT HERE +! ;
-
-
-\\ Finally print the welcome prompt.
-.\" JONESFORTH VERSION \" VERSION @ . CR
+( Finally print the welcome prompt. )
+.\" JONESFORTH VERSION \" VERSION . CR
 .\" OK \"
 "
 
