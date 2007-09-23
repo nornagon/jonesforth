@@ -1,7 +1,7 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 	This is PUBLIC DOMAIN (see public domain release statement below).
-	$Id: jonesforth.S,v 1.20 2007-09-15 11:21:09 rich Exp $
+	$Id: jonesforth.S,v 1.21 2007-09-23 11:00:30 rich Exp $
 
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
 */
@@ -62,6 +62,8 @@
 	http://galileo.phys.virginia.edu/classes/551.jvn.fall01/primer.htm
 
 	http://wiki.laptop.org/go/Forth_Lessons
+
+	http://www.albany.net/~hello/simple.htm
 
 	Here is another "Why FORTH?" essay: http://www.jwdt.com/~paysan/why-forth.html
 
@@ -410,7 +412,7 @@
 									   +-----> +------------------+
 										   | codeword      -------+
 										   +------------------+   |
-									now we're  | assembly to   <------+
+									now we're  | assembly to    <-----+
 									executing  | implement +      |
 									this	   | 	..            |
 									function   | 	..            |
