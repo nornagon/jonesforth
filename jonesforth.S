@@ -1,11 +1,11 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 	This is PUBLIC DOMAIN (see public domain release statement below).
-	$Id: jonesforth.S,v 1.24 2007-09-23 20:06:00 rich Exp $
+	$Id: jonesforth.S,v 1.25 2007-09-23 22:10:04 rich Exp $
 
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
 */
-	.set JONES_VERSION,24
+	.set JONES_VERSION,25
 /*
 	INTRODUCTION ----------------------------------------------------------------------
 
@@ -585,7 +585,7 @@ cold_start:			// High-level code without a codeword.
 return_stack:			// Initial top of return stack.
 
 /* The user definitions area: space for user-defined words and general memory allocations. */
-	.set USER_DEFS_SIZE,16384
+	.set USER_DEFS_SIZE,65536
 	.align 4096
 user_defs_start:
 	.space USER_DEFS_SIZE
@@ -921,7 +921,7 @@ code_\label :			// assembler code follows
 	xorl %eax,(%esp)
 	NEXT
 
-	defcode "INVERT",6,,INVERT // this is the FORTH "NOT" function
+	defcode "INVERT",6,,INVERT // this is the FORTH bitwise "NOT" function
 	notl (%esp)
 	NEXT
 
@@ -1091,6 +1091,7 @@ var_\name :
 	_Y
 	_Z
 	S0		Stores the address of the top of the parameter stack.
+	BASE		The current base for printing and reading numbers.
 
 */
 	defvar "STATE",5,,STATE
@@ -1100,6 +1101,7 @@ var_\name :
 	defvar "_Y",2,,TY
 	defvar "_Z",2,,TZ
 	defvar "S0",2,,SZ
+	defvar "BASE",4,,BASE,10
 
 /*
 	BUILT-IN CONSTANTS ----------------------------------------------------------------------
@@ -1330,12 +1332,7 @@ _WORD:
 5:	.space 32
 
 /*
-	. (also called DOT) prints the top of the stack as an integer.  In real FORTH implementations
-	it should print it in the current base, but this assembler version is simpler and can only
-	print in base 10.
-
-	Remember that you can override even built-in FORTH words easily, so if you want to write a
-	more advanced DOT then you can do so easily at a later point, and probably in FORTH.
+	. (also called DOT) prints the top of the stack as an integer in the current BASE.
 */
 
 	defcode ".",1,,DOT
@@ -1343,23 +1340,24 @@ _WORD:
 	call _DOT		// Easier to do this recursively ...
 	NEXT
 _DOT:
-	mov $10,%ecx		// Base 10
+	mov var_BASE,%ecx	// Get current BASE
 1:
-	cmp %ecx,%eax
+	cmp %ecx,%eax		// %eax < BASE?  If so jump to print immediately.
 	jb 2f
 	xor %edx,%edx		// %edx:%eax / %ecx -> quotient %eax, remainder %edx
 	idivl %ecx
-	pushl %edx
+	pushl %edx		// Print quotient (top half) first ...
 	call _DOT
-	popl %eax
+	popl %eax		// ... then loop to print remainder
 	jmp 1b
-2:
-	xor %ah,%ah
-	aam $10
-	cwde
-	addl $'0',%eax
+2:				// %eax < BASE so print immediately.
+	movl $digits,%edx
+	addl %eax,%edx
+	movb (%edx),%al		// Note top bits are already zero.
 	call _EMIT
 	ret
+	.section .rodata
+digits:	.ascii "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 /*
 	Almost the opposite of DOT (but not quite), SNUMBER parses a numeric string such as one returned
@@ -2102,6 +2100,13 @@ buffer:
 \\ : DUP _X ! _X @ _X @ ;
 \\ : DROP _X ! ;
 
+\\ The built-in . (DOT) function doesn't print a space after the number (unlike the real FORTH word).
+\\ However this is very easily fixed by redefining . (DOT).  Any built-in word can be redefined.
+: .
+	.		\\ this refers back to the previous definition (but see also RECURSE below)
+	SPACE
+;
+
 \\ The 2... versions of the standard operators work on pairs of stack entries.  They're not used
 \\ very commonly so not really worth writing in assembler.  Here is how they are defined in FORTH.
 : 2DUP OVER OVER ;
@@ -2111,12 +2116,14 @@ buffer:
 : 2* 2 * ;
 : 2/ 2 / ;
 
-\\ The primitive . (DOT) function doesn't follow with a blank, so redefine it to behave like FORTH.
-\\ Notice how we can trivially redefine existing words.  Word definitions are not recursive by
-\\ default, but see below for the RECURSE word.
-: .
-	. SPACE		\\ call built-in DOT, then print a space.
-;
+\\ Standard words for manipulating BASE.
+: DECIMAL 10 BASE ! ;
+: HEX 16 BASE ! ;
+
+\\ Standard words for booleans.
+: TRUE 1 ;
+: FALSE 0 ;
+: NOT 0= ;
 
 \\ LITERAL takes whatever is on the stack and compiles LIT <foo>
 : LITERAL IMMEDIATE
@@ -2261,6 +2268,22 @@ buffer:
 		1-		( until we count down to 0 )
 	REPEAT
 	DROP
+;
+
+( c a b WITHIN returns true if a <= c and c < b )
+: WITHIN
+	ROT		( b c a )
+	OVER		( b c a c )
+	<= IF
+		> IF		( b c -- )
+			TRUE
+		ELSE
+			FALSE
+		THEN
+	ELSE
+		2DROP		( b c -- )
+		FALSE
+	THEN
 ;
 
 ( .S prints the contents of the stack.  Very useful for debugging. )
@@ -2430,7 +2453,7 @@ buffer:
 	is the natural size for integers on this machine architecture.  On this 32 bit machine therefore
 	CELLS just multiplies the top of stack by 4.
 )
-: CELLS 4 * ;
+: CELLS ( n -- n ) 4 * ;
 
 (
 	So now we can define VARIABLE easily in much the same way as CONSTANT above.  Refer to the
@@ -2515,6 +2538,21 @@ buffer:
 	THEN
 ;
 
+( x +TO VAL adds x to VAL )
+: +TO IMMEDIATE
+	WORD		( get the name of the value )
+	FIND		( look it up in the dictionary )
+	>DFA		( get a pointer to the first data field (the 'LIT') )
+	4+		( increment to point at the value )
+	STATE @ IF	( compiling? )
+		' LIT ,		( compile LIT )
+		,		( compile the address of the value )
+		' +! ,		( compile +! )
+	ELSE		( immediate mode )
+		+!		( update it straightaway )
+	THEN
+;
+
 (
 	ID. takes an address of a dictionary entry and prints the word's name.
 
@@ -2533,7 +2571,7 @@ buffer:
 		EMIT		( len addr char -- len addr | and print it)
 		SWAP 1-		( len addr -- addr len-1    | subtract one from length )
 	REPEAT
-	DROP DROP	( len addr -- )
+	2DROP		( len addr -- )
 ;
 
 (
@@ -2578,7 +2616,9 @@ buffer:
 	HERE !		( and store HERE with the dictionary address )
 ;
 
-( While compiling, '[COMPILE] word' compiles 'word' if it would otherwise be IMMEDIATE. )
+(
+	While compiling, '[COMPILE] word' compiles 'word' if it would otherwise be IMMEDIATE.
+)
 : [COMPILE] IMMEDIATE
 	WORD		( get the next word )
 	FIND		( find it in the dictionary )
@@ -2597,6 +2637,58 @@ buffer:
 : RECURSE IMMEDIATE
 	LATEST @ >CFA	( LATEST points to the word being compiled at the moment )
 	,		( compile it )
+;
+
+(
+	DUMP is used to dump out the contents of memory, in the 'traditional' hexdump format.
+)
+: DUMP		( addr len -- )
+	BEGIN
+		DUP 0>		( while len > 0 )
+	WHILE
+		OVER .		( print the address )
+		SPACE
+
+		( print up to 16 words on this line )
+		2DUP		( addr len addr len )
+		1- 15 AND 1+	( addr len addr linelen )
+		BEGIN
+			DUP 0>		( while linelen > 0 )
+		WHILE
+			SWAP		( addr len linelen addr )
+			DUP @b		( addr len linelen addr byte )
+			. SPACE		( print the byte )
+			1+ SWAP 1-	( addr len linelen addr -- addr len addr+1 linelen-1 )
+		REPEAT
+		2DROP		( addr len )
+
+		( print the ASCII equivalents )
+		2DUP 1- 15 AND 1+ ( addr len addr linelen )
+		BEGIN
+			DUP 0>		( while linelen > 0)
+		WHILE
+			SWAP		( addr len linelen addr )
+			DUP @b		( addr len linelen addr byte )
+			DUP 32 128 WITHIN IF	( 32 <= c < 128? )
+				EMIT
+			ELSE
+				DROP [ CHAR ? ] LITERAL EMIT
+			THEN
+			1+ SWAP 1-	( addr len linelen addr -- addr len addr+1 linelen-1 )
+		REPEAT
+		2DROP		( addr len )
+		CR
+
+		DUP 1- 15 AND 1+ ( addr len linelen )
+		DUP		( addr len linelen linelen )
+		ROT		( addr linelen len linelen )
+		-		( addr linelen len-linelen )
+		ROT		( len-linelen addr linelen )
+		+		( len-linelen addr+linelen )
+		SWAP		( addr-linelen len-linelen )
+	REPEAT
+	2DROP
+	CR
 ;
 
 ( Finally print the welcome prompt. )
