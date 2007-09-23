@@ -1,11 +1,11 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 	This is PUBLIC DOMAIN (see public domain release statement below).
-	$Id: jonesforth.S,v 1.22 2007-09-23 19:40:40 rich Exp $
+	$Id: jonesforth.S,v 1.23 2007-09-23 20:00:58 rich Exp $
 
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
 */
-	.set JONES_VERSION,22
+	.set JONES_VERSION,23
 /*
 	INTRODUCTION ----------------------------------------------------------------------
 
@@ -579,13 +579,13 @@ cold_start:			// High-level code without a codeword.
 
 	.bss
 /* FORTH return stack. */
-#define RETURN_STACK_SIZE 8192
+	.set RETURN_STACK_SIZE,8192
 	.align 4096
 	.space RETURN_STACK_SIZE
 return_stack:			// Initial top of return stack.
 
 /* The user definitions area: space for user-defined words and general memory allocations. */
-#define USER_DEFS_SIZE 16384
+	.set USER_DEFS_SIZE,16384
 	.align 4096
 user_defs_start:
 	.space USER_DEFS_SIZE
@@ -634,9 +634,9 @@ DOUBLE: .int DOCOL		// codeword
 */
 
 /* Flags - these are discussed later. */
-#define F_IMMED 0x80
-#define F_HIDDEN 0x20
-#define F_LENMASK 0x1f		// length mask
+	.set F_IMMED,0x80
+	.set F_HIDDEN,0x20
+	.set F_LENMASK,0x1f	// length mask
 
 	// Store the chain of links.
 	.set link,0
@@ -2522,18 +2522,14 @@ buffer:
 )
 : ID.
 	4+		( skip over the link pointer )
-	.S CR
 	DUP @b		( get the flags/length byte )
-	.S CR
-	F_LENMASK .S CR AND	( mask out the flags - just want the length )
-	.S CR
+	F_LENMASK AND	( mask out the flags - just want the length )
 
 	BEGIN
 		DUP 0>		( length > 0? )
 	WHILE
 		SWAP 1+		( addr len -- len addr+1 )
 		DUP @b		( len addr -- len addr char | get the next character)
-		.\" print: \" DUP . CR
 		EMIT		( len addr char -- len addr | and print it)
 		SWAP 1-		( len addr -- addr len-1    | subtract one from length )
 	REPEAT
@@ -2545,20 +2541,18 @@ buffer:
 
 	The implementation simply iterates backwards from LATEST using the link pointers.
 )
-	(
 : WORDS
 	LATEST @	( start at LATEST dictionary entry )
 	BEGIN
-		DUP @ 0<>	( while link pointer is not null )
+		DUP 0<>		( while link pointer is not null )
 	WHILE
-		
-
-
-
-
+		DUP ID.		( print the word )
+		SPACE
+		@		( dereference the link pointer - go to previous word )
 	REPEAT
 	DROP
-;	)
+	CR
+;
 
 (
 	So far we have only allocated words and memory.  FORTH provides a rather primitive method
