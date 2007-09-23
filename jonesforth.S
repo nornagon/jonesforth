@@ -1,11 +1,11 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 	This is PUBLIC DOMAIN (see public domain release statement below).
-	$Id: jonesforth.S,v 1.25 2007-09-23 22:10:04 rich Exp $
+	$Id: jonesforth.S,v 1.26 2007-09-23 23:17:56 rich Exp $
 
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
 */
-	.set JONES_VERSION,25
+	.set JONES_VERSION,26
 /*
 	INTRODUCTION ----------------------------------------------------------------------
 
@@ -1776,7 +1776,7 @@ _COMMA:
 	defword ":",1,,COLON
 	.int CREATE		// CREATE the dictionary entry / header
 	.int LIT, DOCOL, COMMA	// Append DOCOL  (the codeword).
-	.int HIDDEN		// Make the word hidden (see below for definition).
+	.int LATEST, FETCH, HIDDEN // Make the word hidden (see below for definition).
 	.int RBRAC		// Go into compile mode.
 	.int EXIT		// Return from the function.
 
@@ -1786,7 +1786,7 @@ _COMMA:
 
 	defword ";",1,F_IMMED,SEMICOLON
 	.int LIT, EXIT, COMMA	// Append EXIT (so the word will return).
-	.int HIDDEN		// Toggle hidden flag -- unhide the word (see below for definition).
+	.int LATEST, FETCH, HIDDEN // Toggle hidden flag -- unhide the word (see below for definition).
 	.int LBRAC		// Go back to IMMEDIATE mode.
 	.int EXIT		// Return from the function.
 
@@ -1825,13 +1825,27 @@ _COMMA:
 	NEXT
 
 /*
-	HIDDEN toggles the other flag, F_HIDDEN, of the latest word.  Note that words flagged
-	as hidden are defined but cannot be called, so this is only used when you are trying to
-	hide the word as it is being defined.
+	'addr HIDDEN' toggles the hidden flag (F_HIDDEN) of the word defined at addr.  To hide the
+	most recently defined word (used above in : and ; definitions) you would do:
+
+		LATEST @ HIDDEN
+
+	Setting this flag stops the word from being found by FIND, and so can be used to make 'private'
+	words.  For example, to break up a large word into smaller parts you might do:
+
+		: SUB1 ... subword ... ;
+		: SUB2 ... subword ... ;
+		: SUB3 ... subword ... ;
+		: MAIN ... defined in terms of SUB1, SUB2, SUB3 ... ;
+		WORD SUB1 FIND HIDDEN		\ Hide SUB1
+		WORD SUB2 FIND HIDDEN		\ Hide SUB2
+		WORD SUB3 FIND HIDDEN		\ Hide SUB3
+
+	After this, only MAIN is 'exported' or seen by the rest of the program.
 */
 
 	defcode "HIDDEN",6,,HIDDEN
-	movl var_LATEST,%edi	// LATEST word.
+	pop %edi		// Dictionary entry.
 	addl $4,%edi		// Point to name/flags byte.
 	xorb $F_HIDDEN,(%edi)	// Toggle the HIDDEN bit.
 	NEXT
@@ -1924,8 +1938,8 @@ _COMMA:
 /*
 	PRINTING STRINGS ----------------------------------------------------------------------
 
-	LITSTRING and EMITSTRING are primitives used to implement the ." operator (which is
-	written in FORTH).  See the definition of that operator below.
+	LITSTRING and EMITSTRING are primitives used to implement the ." and S" operators
+	(which are written in FORTH).  See the definition of those operators below.
 */
 
 	defcode "LITSTRING",9,,LITSTRING
@@ -2308,8 +2322,56 @@ buffer:
 	[NB. The following may be a bit confusing because of the need to use backslash before
 	each double quote character.  The backslashes are there to keep the assembler happy.
 	They are NOT part of the final output.  So here we are defining a function called
-	'dot double-quote' (not 'dot backslash double-quote').]
+	'S double-quote' (not 'S backslash double-quote').]
 
+	S\" string\" is used in FORTH to define strings.  It leaves the address of the string and
+	its length on the stack with the address at the top.
+
+	In compile mode we append
+		LITSTRING <string length> <string rounded up 4 bytes>
+	to the current word.  The primitive LITSTRING does the right thing when the current
+	word is executed.
+
+	In immediate mode there isn't a particularly good place to put the string, but in this
+	case we put the string at HERE (but we _don't_ change HERE).  This is meant as a temporary
+	location, likely to be overwritten soon after.
+)
+: S\" IMMEDIATE		( -- len addr )
+	STATE @ IF	( compiling? )
+		' LITSTRING ,	( compile LITSTRING )
+		HERE @		( save the address of the length word on the stack )
+		0 ,		( dummy length - we don't know what it is yet )
+		BEGIN
+			KEY 		( get next character of the string )
+			DUP '\"' <>
+		WHILE
+			HERE @ !b	( store the character in the compiled image )
+			1 HERE +!	( increment HERE pointer by 1 byte )
+		REPEAT
+		DROP		( drop the double quote character at the end )
+		DUP		( get the saved address of the length word )
+		HERE @ SWAP -	( calculate the length )
+		4-		( subtract 4 (because we measured from the start of the length word) )
+		SWAP !		( and back-fill the length location )
+		HERE @		( round up to next multiple of 4 bytes for the remaining code )
+		3 +
+		3 INVERT AND
+		HERE !
+	ELSE		( immediate mode )
+		HERE @		( get the start address of the temporary space )
+		BEGIN
+			KEY
+			DUP '\"' <>
+		WHILE
+			OVER !b		( save next character )
+			1+		( increment address )
+		REPEAT
+		HERE @ -	( calculate the length )
+		HERE @		( push the start address )
+	THEN
+;
+
+(
 	.\" is the print string operator in FORTH.  Example: .\" Something to print\"
 	The space after the operator is the ordinary space required between words.
 
@@ -2575,7 +2637,24 @@ buffer:
 ;
 
 (
+	'WORD word FIND ?HIDDEN' returns true if 'word' is flagged as hidden.
+
+	'WORD word FIND ?IMMEDIATE' returns true if 'word' is flagged as immediate.
+)
+: ?HIDDEN
+	4+		( skip over the link pointer )
+	@b		( get the flags/length byte )
+	F_HIDDEN AND	( mask the F_HIDDEN flag and return it (as a truth value) )
+;
+: ?IMMEDIATE
+	4+		( skip over the link pointer )
+	@b		( get the flags/length byte )
+	F_IMMED AND	( mask the F_IMMED flag and return it (as a truth value) )
+;
+
+(
 	WORDS prints all the words defined in the dictionary, starting with the word defined most recently.
+	However it doesn't print hidden words.
 
 	The implementation simply iterates backwards from LATEST using the link pointers.
 )
@@ -2584,7 +2663,9 @@ buffer:
 	BEGIN
 		DUP 0<>		( while link pointer is not null )
 	WHILE
-		DUP ID.		( print the word )
+		DUP ?HIDDEN NOT IF
+			DUP ID.		( print the word )
+		THEN
 		SPACE
 		@		( dereference the link pointer - go to previous word )
 	REPEAT
@@ -2643,6 +2724,9 @@ buffer:
 	DUMP is used to dump out the contents of memory, in the 'traditional' hexdump format.
 )
 : DUMP		( addr len -- )
+	BASE @ ROT		( save the current BASE at the bottom of the stack )
+	HEX			( and switch the hexadecimal mode )
+
 	BEGIN
 		DUP 0>		( while len > 0 )
 	WHILE
@@ -2687,8 +2771,9 @@ buffer:
 		+		( len-linelen addr+linelen )
 		SWAP		( addr-linelen len-linelen )
 	REPEAT
-	2DROP
-	CR
+
+	2DROP			( restore stack )
+	BASE !			( restore saved BASE )
 ;
 
 ( Finally print the welcome prompt. )
