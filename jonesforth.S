@@ -1,11 +1,11 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 	This is PUBLIC DOMAIN (see public domain release statement below).
-	$Id: jonesforth.S,v 1.23 2007-09-23 20:00:58 rich Exp $
+	$Id: jonesforth.S,v 1.24 2007-09-23 20:06:00 rich Exp $
 
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
 */
-	.set JONES_VERSION,23
+	.set JONES_VERSION,24
 /*
 	INTRODUCTION ----------------------------------------------------------------------
 
@@ -2572,11 +2572,13 @@ buffer:
 	XXX: Because we wrote VARIABLE to store the variable in memory allocated before the word,
 	in the current implementation VARIABLE FOO FORGET FOO will leak 1 cell of memory.
 )
-\\: FORGET
-	
+: FORGET
+	WORD FIND	( find the word, gets the dictionary entry address )
+	DUP @ LATEST !	( set LATEST to point to the previous word )
+	HERE !		( and store HERE with the dictionary address )
+;
 
-
-( While compiling, [COMPILE] WORD compiles WORD if it would otherwise be IMMEDIATE. )
+( While compiling, '[COMPILE] word' compiles 'word' if it would otherwise be IMMEDIATE. )
 : [COMPILE] IMMEDIATE
 	WORD		( get the next word )
 	FIND		( find it in the dictionary )
