@@ -1,8 +1,8 @@
-\ -*- forth -*-
+\ -*- text -*-
 \	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 \	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 \	This is PUBLIC DOMAIN (see public domain release statement below).
-\	$Id: jonesforth.f,v 1.1 2007-09-24 00:18:19 rich Exp $
+\	$Id: jonesforth.f,v 1.2 2007-09-24 00:37:01 rich Exp $
 \
 \	The first part of this tutorial is in jonesforth.S.  Get if from http://annexia.org/forth
 \
@@ -104,6 +104,14 @@
 : '(' [ CHAR ( ] LITERAL ;
 : ')' [ CHAR ) ] LITERAL ;
 : '"' [ CHAR " ] LITERAL ;
+
+\ While compiling, '[COMPILE] word' compiles 'word' if it would otherwise be IMMEDIATE.
+: [COMPILE] IMMEDIATE
+	WORD		\ get the next word
+	FIND		\ find it in the dictionary
+	>CFA		\ get its codeword
+	,		\ and compile that
+;
 
 \ So far we have defined only very simple definitions.  Before we can go further, we really need to
 \ make some control structures, like IF ... THEN and loops.  Luckily we can define arbitrary control
@@ -264,14 +272,13 @@
 ;
 
 (
-	[NB. The following may be a bit confusing because of the need to use backslash before
-	each double quote character.  The backslashes are there to keep the assembler happy.
-	They are NOT part of the final output.  So here we are defining a function called
-	'S double-quote' (not 'S backslash double-quote').]
-
 	S" string" is used in FORTH to define strings.  It leaves the address of the string and
-	its length on the stac,k with the address at the top.  The space following S" is the normal
+	its length on the stack, with the address at the top.  The space following S" is the normal
 	space between FORTH words and is not a part of the string.
+
+	This is tricky to define because it has to do different things depending on whether
+	we are compiling or in immediate mode.  (Thus the word is marked IMMEDIATE so it can
+	detect this and do different things).
 
 	In compile mode we append
 		LITSTRING <string length> <string rounded up 4 bytes>
@@ -312,6 +319,7 @@
 			OVER !b		( save next character )
 			1+		( increment address )
 		REPEAT
+		DROP		( drop the final " character )
 		HERE @ -	( calculate the length )
 		HERE @		( push the start address )
 	THEN
@@ -319,46 +327,27 @@
 
 (
 	." is the print string operator in FORTH.  Example: ." Something to print"
-	The space after the operator is the ordinary space required between words.
-
-	This is tricky to define because it has to do different things depending on whether
-	we are compiling or in immediate mode.  (Thus the word is marked IMMEDIATE so it can
-	detect this and do different things).
+	The space after the operator is the ordinary space required between words and is not
+	a part of what is printed.
 
 	In immediate mode we just keep reading characters and printing them until we get to
 	the next double quote.
 
-	In compile mode we have the problem of where we're going to store the string (remember
-	that the input buffer where the string comes from may be overwritten by the time we
-	come round to running the function).  We store the string in the compiled function
-	like this:
-	..., LITSTRING, string length, string rounded up to 4 bytes, EMITSTRING, ...
+	In compile mode we use S" to store the string, then add EMITSTRING afterwards:
+		LITSTRING <string length> <string rounded up to 4 bytes> EMITSTRING
+
+	It may be interesting to note the use of [COMPILE] to turn the call to the immediate
+	word S" into compilation of that word.  It compiles it into the definition of .",
+	not into the definition of the word being compiled when this is running (complicated
+	enough for you?)
 )
 : ." IMMEDIATE		( -- )
 	STATE @ IF	( compiling? )
-		' LITSTRING ,	( compile LITSTRING )
-		HERE @		( save the address of the length word on the stack )
-		0 ,		( dummy length - we don't know what it is yet )
-		BEGIN
-			KEY 		( get next character of the string )
-			DUP '"' <>
-		WHILE
-			HERE @ !b	( store the character in the compiled image )
-			1 HERE +!	( increment HERE pointer by 1 byte )
-		REPEAT
-		DROP		( drop the double quote character at the end )
-		DUP		( get the saved address of the length word )
-		HERE @ SWAP -	( calculate the length )
-		4-		( subtract 4 (because we measured from the start of the length word) )
-		SWAP !		( and back-fill the length location )
-		HERE @		( round up to next multiple of 4 bytes for the remaining code )
-		3 +
-		3 INVERT AND
-		HERE !
+		[COMPILE] S"	( read the string, and compile LITSTRING, etc. )
 		' EMITSTRING ,	( compile the final EMITSTRING )
 	ELSE
 		( In immediate mode, just read characters and print them until we get
-		  to the ending double quote.  Much simpler than the above code! )
+		  to the ending double quote. )
 		BEGIN
 			KEY
 			DUP '"' = IF
@@ -641,16 +630,6 @@
 	WORD FIND	( find the word, gets the dictionary entry address )
 	DUP @ LATEST !	( set LATEST to point to the previous word )
 	HERE !		( and store HERE with the dictionary address )
-;
-
-(
-	While compiling, '[COMPILE] word' compiles 'word' if it would otherwise be IMMEDIATE.
-)
-: [COMPILE] IMMEDIATE
-	WORD		( get the next word )
-	FIND		( find it in the dictionary )
-	>CFA		( get its codeword )
-	,		( and compile that )
 ;
 
 (
