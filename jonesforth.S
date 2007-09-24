@@ -1,11 +1,11 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 	This is PUBLIC DOMAIN (see public domain release statement below).
-	$Id: jonesforth.S,v 1.26 2007-09-23 23:17:56 rich Exp $
+	$Id: jonesforth.S,v 1.27 2007-09-24 00:01:38 rich Exp $
 
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
 */
-	.set JONES_VERSION,26
+	.set JONES_VERSION,27
 /*
 	INTRODUCTION ----------------------------------------------------------------------
 
@@ -2325,7 +2325,8 @@ buffer:
 	'S double-quote' (not 'S backslash double-quote').]
 
 	S\" string\" is used in FORTH to define strings.  It leaves the address of the string and
-	its length on the stack with the address at the top.
+	its length on the stac,k with the address at the top.  The space following S\" is the normal
+	space between FORTH words and is not a part of the string.
 
 	In compile mode we append
 		LITSTRING <string length> <string rounded up 4 bytes>
