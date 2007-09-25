@@ -2,7 +2,7 @@
 \	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 \	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 \	This is PUBLIC DOMAIN (see public domain release statement below).
-\	$Id: jonesforth.f,v 1.2 2007-09-24 00:37:01 rich Exp $
+\	$Id: jonesforth.f,v 1.3 2007-09-25 09:50:54 rich Exp $
 \
 \	The first part of this tutorial is in jonesforth.S.  Get if from http://annexia.org/forth
 \
@@ -438,10 +438,10 @@
 
 	First ALLOT, where n ALLOT allocates n bytes of memory.  (Note when calling this that
 	it's a very good idea to make sure that n is a multiple of 4, or at least that next time
-	a word is compiled that n has been left as a multiple of 4).
+	a word is compiled that HERE has been left as a multiple of 4).
 )
 : ALLOT		( n -- addr )
-	HERE @ SWAP	( here n -- )
+	HERE @ SWAP	( here n )
 	HERE +!		( adds n to HERE, after this the old value of HERE is still on the stack )
 ;
 
@@ -476,7 +476,7 @@
 	Notice that 'VAL' on its own doesn't return the address of the value, but the value itself,
 	making values simpler and more obvious to use than variables (no indirection through '@').
 	The price is a more complicated implementation, although despite the complexity there is no
-	particular performance penalty at runtime.
+	performance penalty at runtime.
 
 	A naive implementation of 'TO' would be quite slow, involving a dictionary search each time.
 	But because this is FORTH we have complete control of the compiler so we can compile TO more
@@ -598,8 +598,8 @@
 	BEGIN
 		DUP 0<>		( while link pointer is not null )
 	WHILE
-		DUP ?HIDDEN NOT IF
-			DUP ID.		( print the word )
+		DUP ?HIDDEN NOT IF	( ignore hidden words )
+			DUP ID.		( but if not hidden, print the word )
 		THEN
 		SPACE
 		@		( dereference the link pointer - go to previous word )
