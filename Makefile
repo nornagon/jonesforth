@@ -1,4 +1,4 @@
-# $Id: Makefile,v 1.3 2007-09-24 00:18:19 rich Exp $
+# $Id: Makefile,v 1.4 2007-09-25 21:45:26 rich Exp $
 
 all:
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
@@ -6,3 +6,8 @@ all:
 run:
 	cat jonesforth.f - | ./jonesforth
 
+remote:
+	scp jonesforth.S jonesforth.f rjones@oirase:Desktop/
+	ssh rjones@oirase sh -c '"rm -f Desktop/jonesforth; \
+	  gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o Desktop/jonesforth Desktop/jonesforth.S; \
+	  cat Desktop/jonesforth.f - | Desktop/jonesforth"'
