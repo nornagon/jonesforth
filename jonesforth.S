@@ -1,7 +1,7 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 	This is PUBLIC DOMAIN (see public domain release statement below).
-	$Id: jonesforth.S,v 1.30 2007-09-25 09:50:54 rich Exp $
+	$Id: jonesforth.S,v 1.31 2007-09-25 21:46:20 rich Exp $
 
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
 */
@@ -783,20 +783,18 @@ code_\label :			// assembler code follows
 	push %eax		// ignore overflow
 	NEXT
 
-	defcode "/",1,,DIV
-	xor %edx,%edx
-	pop %ebx
-	pop %eax
-	idivl %ebx
-	push %eax		// push quotient
-	NEXT
+/*
+	In this FORTH, only /MOD is primitive.  We define the / and MOD words in
+	terms of /MOD.
+*/
 
-	defcode "MOD",3,,MOD
+	defcode "/MOD",4,,DIVMOD
 	xor %edx,%edx
 	pop %ebx
 	pop %eax
 	idivl %ebx
 	push %edx		// push remainder
+	push %eax		// push quotient
 	NEXT
 
 	defcode "=",1,,EQU	// top two words are equal?
@@ -1046,17 +1044,16 @@ code_\label :			// assembler code follows
 	NEXT
 
 /* ! and @ (STORE and FETCH) store 32-bit words.  It's also useful to be able to read and write bytes.
- * I don't know whether FORTH has these words, so I invented my own, called !b and @b.
  * Byte-oriented operations only work on architectures which permit them (i386 is one of those).
- * UPDATE: writing a byte to the dictionary pointer is called C, in FORTH.
+ * UPDATE: writing a byte to the dictionary pointer is called C, (CCOMMA) in FORTH.
  */
-	defcode "!b",2,,STOREBYTE
+	defcode "C!",2,,STOREBYTE
 	pop %ebx		// address to store at
 	pop %eax		// data to store there
 	movb %al,(%ebx)		// store it
 	NEXT
 
-	defcode "@b",2,,FETCHBYTE
+	defcode "C@",2,,FETCHBYTE
 	pop %ebx		// address to fetch
 	xor %eax,%eax
 	movb (%ebx),%al		// fetch it
@@ -1339,36 +1336,9 @@ _WORD:
 5:	.space 32
 
 /*
-	. (also called DOT) prints the top of the stack as an integer in the current BASE.
-*/
-
-	defcode ".",1,,DOT
-	pop %eax		// Get the number to print into %eax
-	call _DOT		// Easier to do this recursively ...
-	NEXT
-_DOT:
-	mov var_BASE,%ecx	// Get current BASE
-1:
-	cmp %ecx,%eax		// %eax < BASE?  If so jump to print immediately.
-	jb 2f
-	xor %edx,%edx		// %edx:%eax / %ecx -> quotient %eax, remainder %edx
-	idivl %ecx
-	pushl %edx		// Print quotient (top half) first ...
-	call _DOT
-	popl %eax		// ... then loop to print remainder
-	jmp 1b
-2:				// %eax < BASE so print immediately.
-	movl $digits,%edx
-	addl %eax,%edx
-	movb (%edx),%al		// Note top bits are already zero.
-	call _EMIT
-	ret
-	.section .rodata
-digits:	.ascii "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
-/*
-	Almost the opposite of DOT (but not quite), SNUMBER parses a numeric string such as one returned
-	by WORD and pushes the number on the parameter stack.
+	As well as reading in words we'll need to read in numbers and for that we are using a function
+	called SNUMBER.  This parses a numeric string such as one returned by WORD and pushes the
+	number on the parameter stack.
 
 	This function does absolutely no error checking, and in particular the length of the string
 	must be >= 1 bytes, and should contain only digits 0-9.  If it doesn't you'll get random results.
