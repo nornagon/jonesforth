@@ -2,7 +2,7 @@
 \	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 \	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 \	This is PUBLIC DOMAIN (see public domain release statement below).
-\	$Id: jonesforth.f,v 1.3 2007-09-25 09:50:54 rich Exp $
+\	$Id: jonesforth.f,v 1.4 2007-09-25 21:48:20 rich Exp $
 \
 \	The first part of this tutorial is in jonesforth.S.  Get if from http://annexia.org/forth
 \
@@ -44,6 +44,12 @@
 \
 \	FORTH is case-sensitive.  Use capslock!
 
+\ The primitive word /MOD (DIVMOD) leaves both the quotient and the remainder on the stack.  (On
+\ i386, the idivl instruction gives both anyway).  Now we can define the / and MOD in terms of /MOD
+\ and a few other primitives.
+: / /MOD SWAP DROP ;
+: MOD /MOD DROP ;
+
 \ Define some character constants
 : '\n'   10 ;
 : 'SPACE' 32 ;
@@ -59,13 +65,6 @@
 \ : DUP _X ! _X @ _X @ ;
 \ : DROP _X ! ;
 
-\ The built-in . (DOT) function doesn't print a space after the number (unlike the real FORTH word).
-\ However this is very easily fixed by redefining . (DOT).  Any built-in word can be redefined.
-: .
-	.		\ this refers back to the previous definition (but see also RECURSE below)
-	SPACE
-;
-
 \ The 2... versions of the standard operators work on pairs of stack entries.  They're not used
 \ very commonly so not really worth writing in assembler.  Here is how they are defined in FORTH.
 : 2DUP OVER OVER ;
@@ -75,14 +74,13 @@
 : 2* 2 * ;
 : 2/ 2 / ;
 
-\ Standard words for manipulating BASE.
-: DECIMAL 10 BASE ! ;
-: HEX 16 BASE ! ;
+\ NEGATE leaves the negative of a number on the stack.
+: NEGATE 0 SWAP - ;
 
 \ Standard words for booleans.
-: TRUE 1 ;
+: TRUE  1 ;
 : FALSE 0 ;
-: NOT 0= ;
+: NOT   0= ;
 
 \ LITERAL takes whatever is on the stack and compiles LIT <foo>
 : LITERAL IMMEDIATE
@@ -90,12 +88,13 @@
 	,		\ compile the literal itself (from the stack)
 	;
 
-\ Now we can use [ and ] to insert literals which are calculated at compile time.
+\ Now we can use [ and ] to insert literals which are calculated at compile time.  (Recall that
+\ [ and ] are the FORTH words which switch into and out of immediate mode.)
 \ Within definitions, use [ ... ] LITERAL anywhere that '...' is a constant expression which you
 \ would rather only compute once (at compile time, rather than calculating it each time your word runs).
 : ':'
-	[		\ go into immediate mode temporarily
-	CHAR :		\ push the number 58 (ASCII code of colon) on the stack
+	[		\ go into immediate mode (temporarily)
+	CHAR :		\ push the number 58 (ASCII code of colon) on the parameter stack
 	]		\ go back to compile mode
 	LITERAL		\ compile LIT 58 as the definition of ':' word
 ;
@@ -104,6 +103,9 @@
 : '(' [ CHAR ( ] LITERAL ;
 : ')' [ CHAR ) ] LITERAL ;
 : '"' [ CHAR " ] LITERAL ;
+: 'A' [ CHAR A ] LITERAL ;
+: '0' [ CHAR 0 ] LITERAL ;
+: '-' [ CHAR - ] LITERAL ;
 
 \ While compiling, '[COMPILE] word' compiles 'word' if it would otherwise be IMMEDIATE.
 : [COMPILE] IMMEDIATE
@@ -111,6 +113,18 @@
 	FIND		\ find it in the dictionary
 	>CFA		\ get its codeword
 	,		\ and compile that
+;
+
+\ RECURSE makes a recursive call to the current word that is being compiled.
+\
+\ Normally while a word is being compiled, it is marked HIDDEN so that references to the
+\ same word within are calls to the previous definition of the word.  However we still have
+\ access to the word which we are currently compiling through the LATEST pointer so we
+\ can use that to compile a recursive call.
+: RECURSE IMMEDIATE
+	LATEST @	\ LATEST points to the word being compiled at the moment
+	>CFA		\ get the codeword
+	,		\ compile it
 ;
 
 \ So far we have defined only very simple definitions.  Before we can go further, we really need to
@@ -226,6 +240,76 @@
 	( -- )		means the word has no effect on the stack
 )
 
+( Standard words for manipulating BASE. )
+: DECIMAL ( -- ) 10 BASE ! ;
+: HEX ( -- ) 16 BASE ! ;
+
+(
+	The standard FORTH word . (DOT) is very important.  It takes the number at the top
+	of the stack and prints it out.  However first I'm going to implement some lower-level
+	FORTH words:
+
+	U.R	( u width -- )	which prints an unsigned number, padded to a certain width
+	U.	( u -- )	which prints an unsigned number
+	.R	( n width -- )	which prints a signed number, padded to a certain width.
+
+	For example:
+		-123 6 .R
+	will print out these characters:
+		<space> <space> - 1 2 3
+
+	In other words, the number padded left to a certain number of characters.
+
+	The full number is printed even if it is wider than width, and this is what allows us to
+	define the ordinary functions U. and . (we just set width to zero knowing that the full
+	number will be printed anyway).
+
+	Another wrinkle of . and friends is that they obey the current base in the variable BASE.
+	BASE can be anything in the range 2 to 36.
+)
+: U.R		( u width -- )
+	( DROP XXX )
+	BASE @ /MOD	( width rem quot )
+	DUP 0<> IF	( if quotient <> 0 then )
+		RECURSE		( print the quotient )
+	ELSE
+		DROP		( drop the zero quotient )
+	THEN
+
+	( print the remainder )
+	DUP 10 < IF
+		'0'		( decimal digits 0..9 )
+	ELSE
+		10 -		( hex and beyond digits A..Z )
+		'A'
+	THEN
+	+
+	EMIT
+;
+
+( U. is easy to define in terms of U.R  Note the trailing space. )
+: U. 0 U.R SPACE ;
+
+( .R is easy, we just need to print the sign and then call U.R )
+: .R		( n width -- )
+	SWAP		( width n )
+	DUP 0< IF
+		'-' EMIT	( print the sign )
+		NEGATE		( negate the number so we can use U.R )
+		SWAP 1-		( n width-1 )
+	ELSE
+		SWAP		( n width )
+	THEN
+	DROP ( XXX )
+	U.R
+;
+
+( Finally we can define word . in terms of .R, with a trailing space. )
+: . 0 .R SPACE ;
+
+( ? fetches the integer at an address and prints it. )
+: ? @ . ;
+
 ( With the looping constructs, we can now write SPACES, which writes n spaces to stdout. )
 : SPACES	( n -- )
 	BEGIN
@@ -272,6 +356,18 @@
 ;
 
 (
+	ALIGNED takes an address and rounds it up (aligns it) to the next 4 byte boundary.
+)
+: ALIGNED	( addr -- addr )
+	3 + 3 INVERT AND	( (addr+3) & ~3 )
+;
+
+(
+	ALIGN aligns the HERE pointer, so the next word appended will be aligned properly.
+)
+: ALIGN HERE @ ALIGNED HERE ! ;
+
+(
 	S" string" is used in FORTH to define strings.  It leaves the address of the string and
 	its length on the stack, with the address at the top.  The space following S" is the normal
 	space between FORTH words and is not a part of the string.
@@ -298,7 +394,7 @@
 			KEY 		( get next character of the string )
 			DUP '"' <>
 		WHILE
-			HERE @ !b	( store the character in the compiled image )
+			HERE @ C!	( store the character in the compiled image )
 			1 HERE +!	( increment HERE pointer by 1 byte )
 		REPEAT
 		DROP		( drop the double quote character at the end )
@@ -306,17 +402,14 @@
 		HERE @ SWAP -	( calculate the length )
 		4-		( subtract 4 (because we measured from the start of the length word) )
 		SWAP !		( and back-fill the length location )
-		HERE @		( round up to next multiple of 4 bytes for the remaining code )
-		3 +
-		3 INVERT AND
-		HERE !
+		ALIGN		( round up to next multiple of 4 bytes for the remaining code )
 	ELSE		( immediate mode )
 		HERE @		( get the start address of the temporary space )
 		BEGIN
 			KEY
 			DUP '"' <>
 		WHILE
-			OVER !b		( save next character )
+			OVER C!		( save next character )
 			1+		( increment address )
 		REPEAT
 		DROP		( drop the final " character )
@@ -365,7 +458,7 @@
 	10 CONSTANT TEN		when TEN is executed, it leaves the integer 10 on the stack
 	VARIABLE VAR		when VAR is executed, it leaves the address of VAR on the stack
 
-	Constants can be read by not written, eg:
+	Constants can be read but not written, eg:
 
 	TEN . CR		prints 10
 
@@ -373,6 +466,7 @@
 
 	VAR @			leaves the value of VAR on the stack
 	VAR @ . CR		prints the value of VAR
+	VAR ? CR		same as above, since ? is the same as @ .
 
 	and update the variable by doing:
 
@@ -407,6 +501,9 @@
 
 	Notice that this word definition is exactly the same as you would have got if you had
 	written : TEN 10 ;
+
+	Note for people reading the code below: DOCOL is a constant word which we defined in the
+	assembler part which returns the value of the assembler symbol of the same name.
 )
 : CONSTANT
 	CREATE		( make the dictionary entry (the name follows CONSTANT) )
@@ -557,14 +654,14 @@
 )
 : ID.
 	4+		( skip over the link pointer )
-	DUP @b		( get the flags/length byte )
+	DUP C@		( get the flags/length byte )
 	F_LENMASK AND	( mask out the flags - just want the length )
 
 	BEGIN
 		DUP 0>		( length > 0? )
 	WHILE
 		SWAP 1+		( addr len -- len addr+1 )
-		DUP @b		( len addr -- len addr char | get the next character)
+		DUP C@		( len addr -- len addr char | get the next character)
 		EMIT		( len addr char -- len addr | and print it)
 		SWAP 1-		( len addr -- addr len-1    | subtract one from length )
 	REPEAT
@@ -578,12 +675,12 @@
 )
 : ?HIDDEN
 	4+		( skip over the link pointer )
-	@b		( get the flags/length byte )
+	C@		( get the flags/length byte )
 	F_HIDDEN AND	( mask the F_HIDDEN flag and return it (as a truth value) )
 ;
 : ?IMMEDIATE
 	4+		( skip over the link pointer )
-	@b		( get the flags/length byte )
+	C@		( get the flags/length byte )
 	F_IMMED AND	( mask the F_IMMED flag and return it (as a truth value) )
 ;
 
@@ -633,19 +730,6 @@
 ;
 
 (
-	RECURSE makes a recursive call to the current word that is being compiled.
-
-	Normally while a word is being compiled, it is marked HIDDEN so that references to the
-	same word within are calls to the previous definition of the word.  However we still have
-	access to the word which we are currently compiling through the LATEST pointer so we
-	can use that to compile a recursive call.
-)
-: RECURSE IMMEDIATE
-	LATEST @ >CFA	( LATEST points to the word being compiled at the moment )
-	,		( compile it )
-;
-
-(
 	DUMP is used to dump out the contents of memory, in the 'traditional' hexdump format.
 )
 : DUMP		( addr len -- )
@@ -655,7 +739,7 @@
 	BEGIN
 		DUP 0>		( while len > 0 )
 	WHILE
-		OVER .		( print the address )
+		OVER 8 .R	( print the address )
 		SPACE
 
 		( print up to 16 words on this line )
@@ -665,8 +749,8 @@
 			DUP 0>		( while linelen > 0 )
 		WHILE
 			SWAP		( addr len linelen addr )
-			DUP @b		( addr len linelen addr byte )
-			. SPACE		( print the byte )
+			DUP C@		( addr len linelen addr byte )
+			2 .R SPACE	( print the byte )
 			1+ SWAP 1-	( addr len linelen addr -- addr len addr+1 linelen-1 )
 		REPEAT
 		2DROP		( addr len )
@@ -677,7 +761,7 @@
 			DUP 0>		( while linelen > 0)
 		WHILE
 			SWAP		( addr len linelen addr )
-			DUP @b		( addr len linelen addr byte )
+			DUP C@		( addr len linelen addr byte )
 			DUP 32 128 WITHIN IF	( 32 <= c < 128? )
 				EMIT
 			ELSE
