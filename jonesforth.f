@@ -2,7 +2,7 @@
 \	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 \	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 \	This is PUBLIC DOMAIN (see public domain release statement below).
-\	$Id: jonesforth.f,v 1.4 2007-09-25 21:48:20 rich Exp $
+\	$Id: jonesforth.f,v 1.5 2007-09-26 22:20:52 rich Exp $
 \
 \	The first part of this tutorial is in jonesforth.S.  Get if from http://annexia.org/forth
 \
@@ -106,6 +106,7 @@
 : 'A' [ CHAR A ] LITERAL ;
 : '0' [ CHAR 0 ] LITERAL ;
 : '-' [ CHAR - ] LITERAL ;
+: '.' [ CHAR . ] LITERAL ;
 
 \ While compiling, '[COMPILE] word' compiles 'word' if it would otherwise be IMMEDIATE.
 : [COMPILE] IMMEDIATE
@@ -240,6 +241,17 @@
 	( -- )		means the word has no effect on the stack
 )
 
+( With the looping constructs, we can now write SPACES, which writes n spaces to stdout. )
+: SPACES	( n -- )
+	BEGIN
+		DUP 0>		( while n > 0 )
+	WHILE
+		SPACE		( print a space )
+		1-		( until we count down to 0 )
+	REPEAT
+	DROP
+;
+
 ( Standard words for manipulating BASE. )
 : DECIMAL ( -- ) 10 BASE ! ;
 : HEX ( -- ) 16 BASE ! ;
@@ -266,9 +278,13 @@
 
 	Another wrinkle of . and friends is that they obey the current base in the variable BASE.
 	BASE can be anything in the range 2 to 36.
+
+	While we're defining . &c we can also define .S which is a useful debugging tool.  This
+	word prints the current stack (non-destructively) from top to bottom.
 )
-: U.R		( u width -- )
-	( DROP XXX )
+
+( This is the underlying recursive definition of U. )
+: U.		( u -- )
 	BASE @ /MOD	( width rem quot )
 	DUP 0<> IF	( if quotient <> 0 then )
 		RECURSE		( print the quotient )
@@ -287,39 +303,88 @@
 	EMIT
 ;
 
-( U. is easy to define in terms of U.R  Note the trailing space. )
-: U. 0 U.R SPACE ;
+(
+	FORTH word .S prints the contents of the stack.  It doesn't alter the stack.
+	Very useful for debugging.
+)
+: .S		( -- )
+	DSP@		( get current stack pointer )
+	BEGIN
+		DUP S0 @ <
+	WHILE
+		DUP @ U.	( print the stack element )
+		SPACE
+		4+		( move up )
+	REPEAT
+	DROP
+;
 
-( .R is easy, we just need to print the sign and then call U.R )
+( This word returns the width (in characters) of an unsigned number in the current base )
+: UWIDTH	( u -- width )
+	BASE @ /	( rem quot )
+	DUP 0<> IF	( if quotient <> 0 then )
+		RECURSE 1+	( return 1+recursive call )
+	ELSE
+		DROP		( drop the zero quotient )
+		1		( return 1 )
+	THEN
+;
+
+: U.R		( u width -- )
+	SWAP		( width u )
+	DUP		( width u u )
+	UWIDTH		( width u uwidth )
+	-ROT		( u uwidth width )
+	SWAP -		( u width-uwidth )
+	( At this point if the requested width is narrower, we'll have a negative number on the stack.
+	  Otherwise the number on the stack is the number of spaces to print.  But SPACES won't print
+	  a negative number of spaces anyway, so it's now safe to call SPACES ... )
+	SPACES
+	( ... and then call the underlying implementation of U. )
+	U.
+;
+
+(
+	.R prints a signed number, padded to a certain width.  We can't just print the sign
+	and call U.R because we want the sign to be next to the number ('-123' instead of '-  123').
+)
 : .R		( n width -- )
 	SWAP		( width n )
 	DUP 0< IF
-		'-' EMIT	( print the sign )
-		NEGATE		( negate the number so we can use U.R )
-		SWAP 1-		( n width-1 )
+		NEGATE		( width u )
+		1		( save a flag to remember that it was negative | width n 1 )
+		ROT		( 1 width u )
+		SWAP		( 1 u width )
+		1-		( 1 u width-1 )
 	ELSE
-		SWAP		( n width )
+		0		( width u 0 )
+		ROT		( 0 width u )
+		SWAP		( 0 u width )
 	THEN
-	DROP ( XXX )
-	U.R
+	SWAP		( flag width u )
+	DUP		( flag width u u )
+	UWIDTH		( flag width u uwidth )
+	-ROT		( flag u uwidth width )
+	SWAP -		( flag u width-uwidth )
+
+	SPACES		( flag u )
+	SWAP		( u flag )
+
+	IF			( was it negative? print the - character )
+		'-' EMIT
+	THEN
+
+	U.
 ;
 
 ( Finally we can define word . in terms of .R, with a trailing space. )
 : . 0 .R SPACE ;
 
+( The real U., note the trailing space. )
+: U. U. SPACE ;
+
 ( ? fetches the integer at an address and prints it. )
 : ? @ . ;
-
-( With the looping constructs, we can now write SPACES, which writes n spaces to stdout. )
-: SPACES	( n -- )
-	BEGIN
-		DUP 0>		( while n > 0 )
-	WHILE
-		SPACE		( print a space )
-		1-		( until we count down to 0 )
-	REPEAT
-	DROP
-;
 
 ( c a b WITHIN returns true if a <= c and c < b )
 : WITHIN
@@ -335,18 +400,6 @@
 		2DROP		( b c -- )
 		FALSE
 	THEN
-;
-
-( .S prints the contents of the stack.  Very useful for debugging. )
-: .S		( -- )
-	DSP@		( get current stack pointer )
-	BEGIN
-		DUP S0 @ <
-	WHILE
-		DUP @ .		( print the stack element )
-		4+		( move up )
-	REPEAT
-	DROP
 ;
 
 ( DEPTH returns the depth of the stack. )
@@ -765,7 +818,7 @@
 			DUP 32 128 WITHIN IF	( 32 <= c < 128? )
 				EMIT
 			ELSE
-				DROP [ CHAR ? ] LITERAL EMIT
+				DROP '.' EMIT
 			THEN
 			1+ SWAP 1-	( addr len linelen addr -- addr len addr+1 linelen-1 )
 		REPEAT
