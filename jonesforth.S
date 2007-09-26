@@ -1,7 +1,7 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 	This is PUBLIC DOMAIN (see public domain release statement below).
-	$Id: jonesforth.S,v 1.32 2007-09-26 22:20:52 rich Exp $
+	$Id: jonesforth.S,v 1.33 2007-09-26 22:47:49 rich Exp $
 
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
 */
@@ -45,7 +45,8 @@
 	over every other element in a list of numbers?  You can add it to the language.  What
 	about an operator which pulls in variables directly from a configuration file and makes
 	them available as FORTH variables?  Or how about adding Makefile-like dependencies to
-	the language?  No problem in FORTH.  This concept isn't common in programming languages,
+	the language?  No problem in FORTH.  How about modifying the FORTH compiler to allow
+	complex inlining strategies -- simple.  This concept isn't common in programming languages,
 	but it has a name (in fact two names): "macros" (by which I mean LISP-style macros, not
 	the lame C preprocessor) and "domain specific languages" (DSLs).
 
@@ -74,8 +75,14 @@
 	This code draws heavily on the design of LINA FORTH (http://home.hccnet.nl/a.w.m.van.der.horst/lina.html)
 	by Albert van der Horst.  Any similarities in the code are probably not accidental.
 
-	Also I used this document (http://ftp.funet.fi/pub/doc/IOCCC/1992/buzzard.2.design) which really
-	defies easy explanation.
+	Some parts of this FORTH are also based on this IOCCC entry from 1992:
+	http://ftp.funet.fi/pub/doc/IOCCC/1992/buzzard.2.design.
+	I was very proud when Sean Barrett, the original author of the IOCCC entry, commented in the LtU thread
+	http://lambda-the-ultimate.org/node/2452#comment-36818 about this FORTH.
+
+	And finally I'd like to acknowledge the (possibly forgotten?) authors of ARTIC FORTH because their
+	original program which I still have on original cassette tape kept nagging away at me all these years.
+	http://en.wikipedia.org/wiki/Artic_Software
 
 	PUBLIC DOMAIN ----------------------------------------------------------------------
 
@@ -600,7 +607,7 @@ bufftop:
 /*
 	BUILT-IN WORDS ----------------------------------------------------------------------
 
-	Remember our dictionary entries (headers).  Let's bring those together with the codeword
+	Remember our dictionary entries (headers)?  Let's bring those together with the codeword
 	and data words to see how : DOUBLE DUP + ; really looks in memory.
 
 	  pointer to previous word
@@ -784,8 +791,8 @@ code_\label :			// assembler code follows
 	NEXT
 
 /*
-	In this FORTH, only /MOD is primitive.  We define the / and MOD words in
-	terms of /MOD.
+	In this FORTH, only /MOD is primitive.  Later we will define the / and MOD words in
+	terms of the primitive /MOD.
 */
 
 	defcode "/MOD",4,,DIVMOD
@@ -875,7 +882,7 @@ code_\label :			// assembler code follows
 1:	pushl $1
 	NEXT
 
-	defcode "0<",2,,ZLT
+	defcode "0<",2,,ZLT	// comparisons with 0
 	pop %eax
 	test %eax,%eax
 	jl 1f
@@ -911,22 +918,22 @@ code_\label :			// assembler code follows
 1:	pushl $1
 	NEXT
 
-	defcode "AND",3,,AND
+	defcode "AND",3,,AND	// bitwise AND
 	pop %eax
 	andl %eax,(%esp)
 	NEXT
 
-	defcode "OR",2,,OR
+	defcode "OR",2,,OR	// bitwise OR
 	pop %eax
 	orl %eax,(%esp)
 	NEXT
 
-	defcode "XOR",3,,XOR
+	defcode "XOR",3,,XOR	// bitwise XOR
 	pop %eax
 	xorl %eax,(%esp)
 	NEXT
 
-	defcode "INVERT",6,,INVERT // this is the FORTH bitwise "NOT" function
+	defcode "INVERT",6,,INVERT // this is the FORTH bitwise "NOT" function (cf. NEGATE)
 	notl (%esp)
 	NEXT
 
@@ -975,7 +982,7 @@ code_\label :			// assembler code follows
 						   | addr of EXIT     |
 						   +------------------+
 
-	And NEXT just completes the job by, well in this case just by calling DOUBLE again :-)
+	And NEXT just completes the job by, well, in this case just by calling DOUBLE again :-)
 
 	LITERALS ----------------------------------------------------------------------
 
@@ -1043,10 +1050,13 @@ code_\label :			// assembler code follows
 	subl %eax,(%ebx)	// add it
 	NEXT
 
-/* ! and @ (STORE and FETCH) store 32-bit words.  It's also useful to be able to read and write bytes.
- * Byte-oriented operations only work on architectures which permit them (i386 is one of those).
- * UPDATE: writing a byte to the dictionary pointer is called C, (CCOMMA) in FORTH.
+/*
+	! and @ (STORE and FETCH) store 32-bit words.  It's also useful to be able to read and write bytes
+	so we also define standard words C@ and C!.
+
+	Byte-oriented operations only work on architectures which permit them (i386 is one of those).
  */
+
 	defcode "C!",2,,STOREBYTE
 	pop %ebx		// address to store at
 	pop %eax		// data to store there
@@ -1120,7 +1130,7 @@ var_\name :
 	DOCOL		Pointer to DOCOL.
 	F_IMMED		The IMMEDIATE flag's actual value.
 	F_HIDDEN	The HIDDEN flag's actual value.
-	F_LENMASK	The length mask.
+	F_LENMASK	The length mask in the flags/len byte.
 */
 
 	.macro defconst name, namelen, flags=0, label, value
