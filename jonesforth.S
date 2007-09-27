@@ -1,11 +1,11 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 	This is PUBLIC DOMAIN (see public domain release statement below).
-	$Id: jonesforth.S,v 1.35 2007-09-26 22:55:50 rich Exp $
+	$Id: jonesforth.S,v 1.36 2007-09-27 23:09:39 rich Exp $
 
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
 */
-	.set JONES_VERSION,35
+	.set JONES_VERSION,36
 /*
 	INTRODUCTION ----------------------------------------------------------------------
 
@@ -792,7 +792,8 @@ code_\label :			// assembler code follows
 
 /*
 	In this FORTH, only /MOD is primitive.  Later we will define the / and MOD words in
-	terms of the primitive /MOD.
+	terms of the primitive /MOD.  The design of the i386 assembly instruction idiv which
+	leaves both quotient and remainder makes this obvious choice.
 */
 
 	defcode "/MOD",4,,DIVMOD
@@ -1283,7 +1284,7 @@ _EMIT:
 	What it does in detail is that it first skips any blanks (spaces, tabs, newlines and so on).
 	Then it calls KEY to read characters into an internal buffer until it hits a blank.  Then it
 	calculates the length of the word it read and returns the address and the length as
-	two words on the stack (with address at the top).
+	two words on the stack (with the length at the top of stack).
 
 	Notice that WORD has a single internal buffer which it overwrites each time (rather like
 	a static C string).  Also notice that WORD's internal buffer is just 32 bytes long and
@@ -1306,8 +1307,8 @@ _EMIT:
 
 	defcode "WORD",4,,WORD
 	call _WORD
-	push %ecx		// push length
 	push %edi		// push base address
+	push %ecx		// push length
 	NEXT
 
 _WORD:
@@ -1400,10 +1401,10 @@ _SNUMBER:
 */
 
 	defcode "FIND",4,,FIND
-	pop %edi		// %edi = address
 	pop %ecx		// %ecx = length
+	pop %edi		// %edi = address
 	call _FIND
-	push %eax
+	push %eax		// %eax = address of dictionary entry (or NULL)
 	NEXT
 
 _FIND:
@@ -1931,8 +1932,8 @@ _COMMA:
 
 	defcode "LITSTRING",9,,LITSTRING
 	lodsl			// get the length of the string
-	push %eax		// push it on the stack
 	push %esi		// push the address of the start of the string
+	push %eax		// push it on the stack
 	addl %eax,%esi		// skip past the string
  	addl $3,%esi		// but round up to next 4 byte boundary
 	andl $~3,%esi
@@ -1940,8 +1941,8 @@ _COMMA:
 
 	defcode "EMITSTRING",10,,EMITSTRING
 	mov $1,%ebx		// 1st param: stdout
-	pop %ecx		// 2nd param: address of string
 	pop %edx		// 3rd param: length of string
+	pop %ecx		// 2nd param: address of string
 	mov $__NR_write,%eax	// write syscall
 	int $0x80
 	NEXT

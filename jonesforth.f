@@ -2,7 +2,7 @@
 \	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 \	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 \	This is PUBLIC DOMAIN (see public domain release statement below).
-\	$Id: jonesforth.f,v 1.5 2007-09-26 22:20:52 rich Exp $
+\	$Id: jonesforth.f,v 1.6 2007-09-27 23:09:39 rich Exp $
 \
 \	The first part of this tutorial is in jonesforth.S.  Get if from http://annexia.org/forth
 \
@@ -100,6 +100,7 @@
 ;
 
 \ A few more character constants defined the same way as above.
+: ';' [ CHAR ; ] LITERAL ;
 : '(' [ CHAR ( ] LITERAL ;
 : ')' [ CHAR ) ] LITERAL ;
 : '"' [ CHAR " ] LITERAL ;
@@ -240,6 +241,16 @@
 				and returns a single integer (c).
 	( -- )		means the word has no effect on the stack
 )
+
+( Some more complicated stack examples, showing the stack notation. )
+: NIP ( x y -- y ) SWAP DROP ;
+: TUCK ( x y -- y x y ) DUP ROT ;
+: PICK ( x_u ... x_1 x_0 u -- x_u ... x_1 x_0 x_u )
+	1+		( add one because of 'u' on the stack )
+	4 *		( multiply by the word size )
+	DSP@ +		( add to the stack pointer )
+	@    		( and fetch )
+;
 
 ( With the looping constructs, we can now write SPACES, which writes n spaces to stdout. )
 : SPACES	( n -- )
@@ -384,7 +395,7 @@
 : U. U. SPACE ;
 
 ( ? fetches the integer at an address and prints it. )
-: ? @ . ;
+: ? ( addr -- ) @ . ;
 
 ( c a b WITHIN returns true if a <= c and c < b )
 : WITHIN
@@ -422,7 +433,7 @@
 
 (
 	S" string" is used in FORTH to define strings.  It leaves the address of the string and
-	its length on the stack, with the address at the top.  The space following S" is the normal
+	its length on the stack, (length at the top of stack).  The space following S" is the normal
 	space between FORTH words and is not a part of the string.
 
 	This is tricky to define because it has to do different things depending on whether
@@ -438,7 +449,7 @@
 	case we put the string at HERE (but we _don't_ change HERE).  This is meant as a temporary
 	location, likely to be overwritten soon after.
 )
-: S" IMMEDIATE		( -- len addr )
+: S" IMMEDIATE		( -- addr len )
 	STATE @ IF	( compiling? )
 		' LITSTRING ,	( compile LITSTRING )
 		HERE @		( save the address of the length word on the stack )
@@ -468,6 +479,7 @@
 		DROP		( drop the final " character )
 		HERE @ -	( calculate the length )
 		HERE @		( push the start address )
+		SWAP 		( addr len )
 	THEN
 ;
 
@@ -600,7 +612,7 @@
 	is the natural size for integers on this machine architecture.  On this 32 bit machine therefore
 	CELLS just multiplies the top of stack by 4.
 )
-: CELLS ( n -- n ) 4 * ;
+: CELLS ( n -- n ) 4* ;
 
 (
 	So now we can define VARIABLE easily in much the same way as CONSTANT above.  Refer to the
@@ -784,6 +796,9 @@
 
 (
 	DUMP is used to dump out the contents of memory, in the 'traditional' hexdump format.
+
+	Notice that the parameters to DUMP (address, length) are compatible with string words
+	such as WORD and S".
 )
 : DUMP		( addr len -- )
 	BASE @ ROT		( save the current BASE at the bottom of the stack )
@@ -836,6 +851,121 @@
 
 	2DROP			( restore stack )
 	BASE !			( restore saved BASE )
+;
+
+(
+	CFA> is the opposite of >CFA.  It takes a codeword and tries to find the matching
+	dictionary definition.
+
+	In this FORTH this is not so easy.  In fact we have to search through the dictionary
+	because we don't have a convenient back-pointer (as is often the case in other versions
+	of FORTH).
+
+	This word returns 0 if it doesn't find a match.
+)
+: CFA>
+	LATEST @	( start at LATEST dictionary entry )
+	BEGIN
+		DUP 0<>		( while link pointer is not null )
+	WHILE
+		DUP >CFA	( cfa curr curr-cfa )
+		2 PICK		( cfa curr curr-cfa cfa )
+		= IF		( found a match? )
+			NIP		( leave curr dictionary entry on the stack )
+			EXIT		( and return from the function )
+		THEN
+		@		( follow link pointer back )
+	REPEAT
+	2DROP		( restore stack )
+	0		( sorry, nothing found )
+;
+
+(
+	SEE disassembles a FORTH word.
+
+	We search for the dictionary entry of the word, then search again for the next
+	word (effectively, the end of the compiled word).  This results in two pointers:
+
+	+---------+---+---+---+---+------------+------------+------------+------------+
+	| LINK    | 3 | T | E | N | DOCOL      | LIT        | 10         | EXIT       |
+	+---------+---+---+---+---+------------+------------+------------+------------+
+	 ^									       ^
+	 |									       |
+	Start of word							      End of word
+
+	With this information we can have a go at decompiling the word.  We need to
+	recognise "meta-words" like LIT, LITSTRING, BRANCH, etc. and treat those separately.
+)
+: SEE
+	WORD FIND	( find the dictionary entry to decompile )
+
+	( now we search again, looking for the next word )
+	HERE @		( address of the end of the last compiled word )
+	LATEST @	( word last curr )
+	BEGIN
+		2 PICK		( word last curr word )
+		OVER		( word last curr word curr )
+		<>		( word last curr word<>curr? )
+	WHILE			( word last curr )
+		NIP		( word curr )
+		DUP @		( word curr prev (which becomes: word last curr) )
+	REPEAT
+
+	DROP		( at this point, the stack is: start-of-word end-of-word )
+	SWAP		( end-of-word start-of-word )
+
+	( begin the definition with : NAME [IMMEDIATE] )
+	':' EMIT SPACE DUP ID. SPACE
+	DUP ?IMMEDIATE IF ." IMMEDIATE " THEN
+
+	>DFA		( get the data address, ie. points after DOCOL | end-of-word start-of-data )
+
+	( now we start decompiling until we hit the end of the word )
+	( XXX we should ignore the final codeword if it is EXIT )
+	BEGIN		( end start )
+		2DUP >
+	WHILE
+		DUP @		( end start codeword )
+
+		DUP ' LIT = IF		( is it LIT ? )
+			DROP
+			4 + DUP @	( get next word which is the integer constant )
+			.		( and print it )
+		ELSE
+			DUP ' 0BRANCH = IF	( is it 0BRANCH ? )
+				DROP
+				." 0BRANCH ( "
+				4 + DUP @	( print the offset )
+				.
+				')' EMIT SPACE
+			ELSE
+				DUP ' BRANCH = IF	( is it BRANCH ? )
+					DROP
+					." BRANCH ( "
+					4 + DUP @	( print the offset )
+					.
+					')' EMIT SPACE
+				ELSE
+					DUP ' ' = IF		( is it ' (TICK) ? )
+						[ CHAR ' ] LITERAL EMIT SPACE
+						DROP
+						4 + DUP @	( get the next codeword )
+						CFA>		( and force it to be printed as a dictionary entry )
+						ID. SPACE
+					ELSE
+						CFA>		( look up the codeword to get the dictionary entry )
+						ID. SPACE	( and print it )
+					THEN
+				THEN
+			THEN
+		THEN
+
+		4 +		( end start+4 )
+	REPEAT
+
+	';' EMIT CR
+
+	2DROP		( restore stack )
 ;
 
 ( Finally print the welcome prompt. )
