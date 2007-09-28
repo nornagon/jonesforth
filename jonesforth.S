@@ -1,11 +1,11 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 	This is PUBLIC DOMAIN (see public domain release statement below).
-	$Id: jonesforth.S,v 1.36 2007-09-27 23:09:39 rich Exp $
+	$Id: jonesforth.S,v 1.37 2007-09-28 18:55:10 rich Exp $
 
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
 */
-	.set JONES_VERSION,36
+	.set JONES_VERSION,37
 /*
 	INTRODUCTION ----------------------------------------------------------------------
 
@@ -755,6 +755,14 @@ code_\label :			// assembler code follows
 	push %ebx
 	push %eax
 	push %ecx
+	NEXT
+
+	defcode "?DUP",4,,QDUP	// duplicate top of stack if non-zero
+	pop %eax
+	test %eax,%eax
+	jz 1f
+	push %eax
+1:	push %eax
 	NEXT
 
 	defcode "1+",2,,INCR
@@ -1924,10 +1932,13 @@ _COMMA:
 	NEXT
 
 /*
-	PRINTING STRINGS ----------------------------------------------------------------------
+	LITERAL STRINGS ----------------------------------------------------------------------
 
-	LITSTRING and EMITSTRING are primitives used to implement the ." and S" operators
-	(which are written in FORTH).  See the definition of those operators below.
+	LITSTRING is a primitive used to implement the ." and S" operators (which are written in
+	FORTH).  See the definition of those operators later.
+
+	TELL just prints a string.  It's more efficient to define this in assembly because we
+	can make it a single Linux syscall.
 */
 
 	defcode "LITSTRING",9,,LITSTRING
@@ -1939,7 +1950,7 @@ _COMMA:
 	andl $~3,%esi
 	NEXT
 
-	defcode "EMITSTRING",10,,EMITSTRING
+	defcode "TELL",4,,TELL
 	mov $1,%ebx		// 1st param: stdout
 	pop %edx		// 3rd param: length of string
 	pop %ecx		// 2nd param: address of string

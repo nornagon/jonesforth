@@ -2,7 +2,7 @@
 \	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 \	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 \	This is PUBLIC DOMAIN (see public domain release statement below).
-\	$Id: jonesforth.f,v 1.6 2007-09-27 23:09:39 rich Exp $
+\	$Id: jonesforth.f,v 1.7 2007-09-28 18:55:10 rich Exp $
 \
 \	The first part of this tutorial is in jonesforth.S.  Get if from http://annexia.org/forth
 \
@@ -491,8 +491,8 @@
 	In immediate mode we just keep reading characters and printing them until we get to
 	the next double quote.
 
-	In compile mode we use S" to store the string, then add EMITSTRING afterwards:
-		LITSTRING <string length> <string rounded up to 4 bytes> EMITSTRING
+	In compile mode we use S" to store the string, then add TELL afterwards:
+		LITSTRING <string length> <string rounded up to 4 bytes> TELL
 
 	It may be interesting to note the use of [COMPILE] to turn the call to the immediate
 	word S" into compilation of that word.  It compiles it into the definition of .",
@@ -502,7 +502,7 @@
 : ." IMMEDIATE		( -- )
 	STATE @ IF	( compiling? )
 		[COMPILE] S"	( read the string, and compile LITSTRING, etc. )
-		' EMITSTRING ,	( compile the final EMITSTRING )
+		' TELL ,	( compile the final TELL )
 	ELSE
 		( In immediate mode, just read characters and print them until we get
 		  to the ending double quote. )
@@ -854,6 +854,98 @@
 ;
 
 (
+	CASE...ENDCASE is how we do switch statements in FORTH.  There is no generally
+	agreed syntax for this, so I've gone for the syntax mandated by the ISO standard
+	FORTH (ANS-FORTH).
+
+	( some value on the stack )
+	CASE
+	test1 OF ... ENDOF
+	test2 OF ... ENDOF
+	testn OF ... ENDOF
+	... ( default case )
+	ENDCASE
+
+	The CASE statement tests the value on the stack by comparing it for equality with
+	test1, test2, ..., testn and executes the matching piece of code within OF ... ENDOF.
+	If none of the test values match then the default case is executed.  Inside the ... of
+	the default case, the value is still at the top of stack (it is implicitly DROP-ed
+	by ENDCASE).  When ENDOF is executed it jumps after ENDCASE (ie. there is no "fall-through"
+	and no need for a break statement like in C).
+
+	The default case may be omitted.  In fact the tests may also be omitted so that you
+	just have a default case, although this is probably not very useful.
+
+	An example (assuming that 'q', etc. are words which push the ASCII value of the letter
+	on the stack):
+
+	0 VALUE QUIT
+	0 VALUE SLEEP
+	KEY CASE
+		'q' OF 1 TO QUIT ENDOF
+		's' OF 1 TO SLEEP ENDOF
+		( default case: )
+		." Sorry, I didn't understand key <" DUP EMIT ." >, try again." CR
+	ENDCASE
+
+	(In some versions of FORTH, more advanced tests are supported, such as ranges, etc.
+	Other versions of FORTH need you to write OTHERWISE to indicate the default case.
+	As I said above, this FORTH tries to follow the ANS FORTH standard).
+
+	The implementation of CASE...ENDCASE is somewhat non-trivial.  I'm following the
+	implementations from here:
+	http://www.uni-giessen.de/faq/archiv/forthfaq.case_endcase/msg00000.html
+
+	The general plan is to compile the code as a series of IF statements:
+
+	CASE				(push 0 on the immediate-mode parameter stack)
+	test1 OF ... ENDOF		test1 OVER = IF DROP ... ELSE
+	test2 OF ... ENDOF		test2 OVER = IF DROP ... ELSE
+	testn OF ... ENDOF		testn OVER = IF DROP ... ELSE
+	... ( default case )		...
+	ENDCASE				DROP THEN [THEN [THEN ...]]
+
+	The CASE statement pushes 0 on the immediate-mode parameter stack, and that number
+	is used to count how many THEN statements we need when we get to ENDCASE so that each
+	IF has a matching THEN.  The counting is done implicitly.  If you recall from the
+	implementation above of IF, each IF pushes a code address on the immediate-mode stack,
+	and these addresses are non-zero, so by the time we get to ENDCASE the stack contains
+	some number of non-zeroes, followed by a zero.  The number of non-zeroes is how many
+	times IF has been called, so how many times we need to match it with THEN.
+
+	This code uses [COMPILE] so that we compile calls to IF, ELSE, THEN instead of
+	actually calling them while we're compiling the words below.
+
+	As is the case with all of our control structures, they only work within word
+	definitions, not in immediate mode.
+)
+: CASE IMMEDIATE
+	0		( push 0 to mark the bottom of the stack )
+;
+
+: OF IMMEDIATE
+	' OVER ,	( compile OVER )
+	' = ,		( compile = )
+	[COMPILE] IF	( compile IF )
+	' DROP ,  	( compile DROP )
+;
+
+: ENDOF IMMEDIATE
+	[COMPILE] ELSE	( ENDOF is the same as ELSE )
+;
+
+: ENDCASE IMMEDIATE
+	' DROP ,	( compile DROP )
+
+	( keep compiling THEN until we get to our zero marker )
+	BEGIN
+		?DUP
+	WHILE
+		[COMPILE] THEN
+	REPEAT
+;
+
+(
 	CFA> is the opposite of >CFA.  It takes a codeword and tries to find the matching
 	dictionary definition.
 
@@ -927,38 +1019,43 @@
 	WHILE
 		DUP @		( end start codeword )
 
-		DUP ' LIT = IF		( is it LIT ? )
-			DROP
+		CASE
+		' LIT OF		( is it LIT ? )
 			4 + DUP @	( get next word which is the integer constant )
 			.		( and print it )
-		ELSE
-			DUP ' 0BRANCH = IF	( is it 0BRANCH ? )
-				DROP
-				." 0BRANCH ( "
-				4 + DUP @	( print the offset )
-				.
-				')' EMIT SPACE
-			ELSE
-				DUP ' BRANCH = IF	( is it BRANCH ? )
-					DROP
-					." BRANCH ( "
-					4 + DUP @	( print the offset )
-					.
-					')' EMIT SPACE
-				ELSE
-					DUP ' ' = IF		( is it ' (TICK) ? )
-						[ CHAR ' ] LITERAL EMIT SPACE
-						DROP
-						4 + DUP @	( get the next codeword )
-						CFA>		( and force it to be printed as a dictionary entry )
-						ID. SPACE
-					ELSE
-						CFA>		( look up the codeword to get the dictionary entry )
-						ID. SPACE	( and print it )
-					THEN
-				THEN
-			THEN
-		THEN
+		ENDOF
+		' LITSTRING OF		( is it LITSTRING ? )
+			[ CHAR S ] LITERAL EMIT '"' EMIT SPACE ( print S"<space> )
+			4 + DUP @	( get the length word )
+			SWAP 4 + SWAP	( end start+4 length )
+			2DUP TELL	( print the string )
+			'"' EMIT SPACE	( finish the string with a final quote )
+			+ ALIGNED	( end start+4+len, aligned )
+			4 -		( because we're about to add 4 below )
+		ENDOF
+		' 0BRANCH OF		( is it 0BRANCH ? )
+			." 0BRANCH ( "
+			4 + DUP @	( print the offset )
+			.
+			')' EMIT SPACE
+		ENDOF
+		' BRANCH OF		( is it BRANCH ? )
+			." BRANCH ( "
+			4 + DUP @	( print the offset )
+			.
+			')' EMIT SPACE
+		ENDOF
+		' ' OF			( is it ' (TICK) ? )
+			[ CHAR ' ] LITERAL EMIT SPACE
+			4 + DUP @	( get the next codeword )
+			CFA>		( and force it to be printed as a dictionary entry )
+			ID. SPACE
+		ENDOF
+		( default case: )
+			DUP		( in the default case we always need to DUP before using )
+			CFA>		( look up the codeword to get the dictionary entry )
+			ID. SPACE	( and print it )
+		ENDCASE
 
 		4 +		( end start+4 )
 	REPEAT
