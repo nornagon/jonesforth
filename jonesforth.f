@@ -2,7 +2,7 @@
 \	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 \	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 \	This is PUBLIC DOMAIN (see public domain release statement below).
-\	$Id: jonesforth.f,v 1.8 2007-09-28 19:39:21 rich Exp $
+\	$Id: jonesforth.f,v 1.9 2007-09-28 20:22:41 rich Exp $
 \
 \	The first part of this tutorial is in jonesforth.S.  Get if from http://annexia.org/forth
 \
@@ -991,7 +991,8 @@
 : SEE
 	WORD FIND	( find the dictionary entry to decompile )
 
-	( now we search again, looking for the next word )
+	( Now we search again, looking for the next word in the dictionary.  This gives us
+	  the length of the word that we will be decompiling.  (Well, mostly it does). )
 	HERE @		( address of the end of the last compiled word )
 	LATEST @	( word last curr )
 	BEGIN
@@ -1020,50 +1021,50 @@
 
 		CASE
 		' LIT OF		( is it LIT ? )
-			4 + DUP @	( get next word which is the integer constant )
-			.		( and print it )
+			4 + DUP @		( get next word which is the integer constant )
+			.			( and print it )
 		ENDOF
 		' LITSTRING OF		( is it LITSTRING ? )
 			[ CHAR S ] LITERAL EMIT '"' EMIT SPACE ( print S"<space> )
-			4 + DUP @	( get the length word )
-			SWAP 4 + SWAP	( end start+4 length )
-			2DUP TELL	( print the string )
-			'"' EMIT SPACE	( finish the string with a final quote )
-			+ ALIGNED	( end start+4+len, aligned )
-			4 -		( because we're about to add 4 below )
+			4 + DUP @		( get the length word )
+			SWAP 4 + SWAP		( end start+4 length )
+			2DUP TELL		( print the string )
+			'"' EMIT SPACE		( finish the string with a final quote )
+			+ ALIGNED		( end start+4+len, aligned )
+			4 -			( because we're about to add 4 below )
 		ENDOF
 		' 0BRANCH OF		( is it 0BRANCH ? )
 			." 0BRANCH ( "
-			4 + DUP @	( print the offset )
+			4 + DUP @		( print the offset )
 			.
 			')' EMIT SPACE
 		ENDOF
 		' BRANCH OF		( is it BRANCH ? )
 			." BRANCH ( "
-			4 + DUP @	( print the offset )
+			4 + DUP @		( print the offset )
 			.
 			')' EMIT SPACE
 		ENDOF
 		' ' OF			( is it ' (TICK) ? )
 			[ CHAR ' ] LITERAL EMIT SPACE
-			4 + DUP @	( get the next codeword )
-			CFA>		( and force it to be printed as a dictionary entry )
+			4 + DUP @		( get the next codeword )
+			CFA>			( and force it to be printed as a dictionary entry )
 			ID. SPACE
 		ENDOF
 		' EXIT OF		( is it EXIT? )
 			( We expect the last word to be EXIT, and if it is then we don't print it
 			  because EXIT is normally implied by ;.  EXIT can also appear in the middle
 			  of words, and then it needs to be printed. )
-			2DUP		( end start end start )
-			4 +		( end start end start+4 )
-			<> IF		( end start | we're not at the end )
+			2DUP			( end start end start )
+			4 +			( end start end start+4 )
+			<> IF			( end start | we're not at the end )
 				." EXIT "
 			THEN
 		ENDOF
-		( default case: )
-			DUP		( in the default case we always need to DUP before using )
-			CFA>		( look up the codeword to get the dictionary entry )
-			ID. SPACE	( and print it )
+					( default case: )
+			DUP			( in the default case we always need to DUP before using )
+			CFA>			( look up the codeword to get the dictionary entry )
+			ID. SPACE		( and print it )
 		ENDCASE
 
 		4 +		( end start+4 )
