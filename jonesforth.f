@@ -2,7 +2,7 @@
 \	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 \	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 \	This is PUBLIC DOMAIN (see public domain release statement below).
-\	$Id: jonesforth.f,v 1.7 2007-09-28 18:55:10 rich Exp $
+\	$Id: jonesforth.f,v 1.8 2007-09-28 19:39:21 rich Exp $
 \
 \	The first part of this tutorial is in jonesforth.S.  Get if from http://annexia.org/forth
 \
@@ -1013,7 +1013,6 @@
 	>DFA		( get the data address, ie. points after DOCOL | end-of-word start-of-data )
 
 	( now we start decompiling until we hit the end of the word )
-	( XXX we should ignore the final codeword if it is EXIT )
 	BEGIN		( end start )
 		2DUP >
 	WHILE
@@ -1050,6 +1049,16 @@
 			4 + DUP @	( get the next codeword )
 			CFA>		( and force it to be printed as a dictionary entry )
 			ID. SPACE
+		ENDOF
+		' EXIT OF		( is it EXIT? )
+			( We expect the last word to be EXIT, and if it is then we don't print it
+			  because EXIT is normally implied by ;.  EXIT can also appear in the middle
+			  of words, and then it needs to be printed. )
+			2DUP		( end start end start )
+			4 +		( end start end start+4 )
+			<> IF		( end start | we're not at the end )
+				." EXIT "
+			THEN
 		ENDOF
 		( default case: )
 			DUP		( in the default case we always need to DUP before using )

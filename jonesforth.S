@@ -1,11 +1,11 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 	This is PUBLIC DOMAIN (see public domain release statement below).
-	$Id: jonesforth.S,v 1.37 2007-09-28 18:55:10 rich Exp $
+	$Id: jonesforth.S,v 1.38 2007-09-28 19:39:21 rich Exp $
 
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
 */
-	.set JONES_VERSION,37
+	.set JONES_VERSION,38
 /*
 	INTRODUCTION ----------------------------------------------------------------------
 
