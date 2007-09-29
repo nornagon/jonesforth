@@ -2,7 +2,7 @@
 \	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 \	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 \	This is PUBLIC DOMAIN (see public domain release statement below).
-\	$Id: jonesforth.f,v 1.9 2007-09-28 20:22:41 rich Exp $
+\	$Id: jonesforth.f,v 1.10 2007-09-29 16:06:27 rich Exp $
 \
 \	The first part of this tutorial is in jonesforth.S.  Get if from http://annexia.org/forth
 \
@@ -129,6 +129,8 @@
 	,		\ compile it
 ;
 
+\	CONTROL STRUCTURES ----------------------------------------------------------------------
+\
 \ So far we have defined only very simple definitions.  Before we can go further, we really need to
 \ make some control structures, like IF ... THEN and loops.  Luckily we can define arbitrary control
 \ structures directly in FORTH.
@@ -212,6 +214,8 @@
 	SWAP !		\ and back-fill it in the original location
 ;
 
+\	COMMENTS ----------------------------------------------------------------------
+\
 \ FORTH allows ( ... ) as comments within function definitions.  This works by having an IMMEDIATE
 \ word called ( which just drops input characters until it hits the corresponding ).
 : ( IMMEDIATE
@@ -232,6 +236,8 @@
 
 (
 	From now on we can use ( ... ) for comments.
+
+	STACK NOTATION ----------------------------------------------------------------------
 
 	In FORTH style we can also use ( ... -- ... ) to show the effects that a word has on the
 	parameter stack.  For example:
@@ -268,6 +274,8 @@
 : HEX ( -- ) 16 BASE ! ;
 
 (
+	PRINTING NUMBERS ----------------------------------------------------------------------
+
 	The standard FORTH word . (DOT) is very important.  It takes the number at the top
 	of the stack and prints it out.  However first I'm going to implement some lower-level
 	FORTH words:
@@ -432,6 +440,8 @@
 : ALIGN HERE @ ALIGNED HERE ! ;
 
 (
+	STRINGS ----------------------------------------------------------------------
+
 	S" string" is used in FORTH to define strings.  It leaves the address of the string and
 	its length on the stack, (length at the top of stack).  The space following S" is the normal
 	space between FORTH words and is not a part of the string.
@@ -518,6 +528,8 @@
 ;
 
 (
+	CONSTANTS AND VARIABLES ----------------------------------------------------------------------
+
 	In FORTH, global constants and variables are defined like this:
 
 	10 CONSTANT TEN		when TEN is executed, it leaves the integer 10 on the stack
@@ -612,7 +624,7 @@
 	is the natural size for integers on this machine architecture.  On this 32 bit machine therefore
 	CELLS just multiplies the top of stack by 4.
 )
-: CELLS ( n -- n ) 4* ;
+: CELLS ( n -- n ) 4 * ;
 
 (
 	So now we can define VARIABLE easily in much the same way as CONSTANT above.  Refer to the
@@ -628,6 +640,8 @@
 ;
 
 (
+	VALUES ----------------------------------------------------------------------
+
 	VALUEs are like VARIABLEs but with a simpler syntax.  You would generally use them when you
 	want a variable which is read often, and written infrequently.
 
@@ -713,6 +727,8 @@
 ;
 
 (
+	PRINTING THE DICTIONARY ----------------------------------------------------------------------
+
 	ID. takes an address of a dictionary entry and prints the word's name.
 
 	For example: LATEST @ ID. would print the name of the last word that was defined.
@@ -771,6 +787,8 @@
 ;
 
 (
+	FORGET ----------------------------------------------------------------------
+
 	So far we have only allocated words and memory.  FORTH provides a rather primitive method
 	to deallocate.
 
@@ -795,6 +813,8 @@
 ;
 
 (
+	DUMP ----------------------------------------------------------------------
+
 	DUMP is used to dump out the contents of memory, in the 'traditional' hexdump format.
 
 	Notice that the parameters to DUMP (address, length) are compatible with string words
@@ -807,7 +827,7 @@
 	BEGIN
 		DUP 0>		( while len > 0 )
 	WHILE
-		OVER 8 .R	( print the address )
+		OVER 8 U.R	( print the address )
 		SPACE
 
 		( print up to 16 words on this line )
@@ -854,6 +874,8 @@
 ;
 
 (
+	CASE ----------------------------------------------------------------------
+
 	CASE...ENDCASE is how we do switch statements in FORTH.  There is no generally
 	agreed syntax for this, so I've gone for the syntax mandated by the ISO standard
 	FORTH (ANS-FORTH).
@@ -946,6 +968,8 @@
 ;
 
 (
+	DECOMPILER ----------------------------------------------------------------------
+
 	CFA> is the opposite of >CFA.  It takes a codeword and tries to find the matching
 	dictionary definition.
 
@@ -973,7 +997,7 @@
 ;
 
 (
-	SEE disassembles a FORTH word.
+	SEE decompiles a FORTH word.
 
 	We search for the dictionary entry of the word, then search again for the next
 	word (effectively, the end of the compiled word).  This results in two pointers:
@@ -1074,6 +1098,174 @@
 
 	2DROP		( restore stack )
 ;
+
+(
+	DOES> ----------------------------------------------------------------------
+
+	CREATE ... DOES> is a tricky construct allowing you to create words which create other words.
+	For example CONSTANT (defined above) is a word which creates words, and it could have been
+	written as follows:
+
+		: CONSTANT CREATE DOCOL , , DOES> @ ;
+
+	Even explaining what DOES> is supposed to do is tricky.  It's possible that the implementation
+	is easier to understand than the explanation.
+
+	If we look at the definition of CONSTANT here, and remember that when it is called the value
+	of the constant is on the stack and the name follows.  So first CREATE makes the header of a
+	new word with the name.  Secondly the codeword is set to DOCOL.  Thirdly , (COMMA) takes the
+	value off the stack and adds it to the definition.  At this point (just before executing DOES>)
+	the word looks like this:
+
+	  ________ CREATE _______   _ DOCOL ,_   ____ , ___
+	 /                       \ /          \ /          \
+	+---------+---+---+---+---+------------+------------+
+	| LINK    | 3 | T | E | N | DOCOL      | 10         |
+	+---------+---+---+---+---+------------+------------+
+            ^      len              codeword
+	    |
+	  LATEST
+
+	
+)
+
+
+
+
+: DOES>
+	R> LATEST @ >DFA !
+;
+
+(
+	C STRINGS ----------------------------------------------------------------------
+
+	FORTH strings are represented by a start address and length kept on the stack or in memory.
+
+	Most FORTHs don't handle C strings, but we need them in order to access the process arguments
+	and environment left on the stack by the Linux kernel.
+
+	The main function we need is STRLEN which works out the length of a C string.  DUP STRLEN is
+	a common idiom which 'converts' a C string into a FORTH string.  (For example, DUP STRLEN TELL
+	prints a C string).
+)
+
+( STRLEN returns the length of a C string )
+: STRLEN 	( str -- len )
+	DUP		( save start address )
+	BEGIN
+		DUP C@ 0<>	( zero byte found? )
+	WHILE
+		1+
+	REPEAT
+
+	SWAP -		( calculate the length )
+;
+
+(
+	STRNCMP compares two strings up to a length.  As with C's strncmp it returns 0 if they
+	are equal, or a number > 0 or < 0 indicating their order.
+)
+: STRNCMP	( str1 str2 len -- eq? )
+	BEGIN
+		?DUP
+	WHILE
+		ROT		( len str1 str2 )
+		DUP C@		( len str1 str2 char2 )
+		2 PICK C@	( len str1 str2 char2 char1 )
+		OVER   		( len str1 str2 char2 char1 char2 )
+		-		( len str1 str2 char2 char1-char2 )
+
+		?DUP IF		( strings not the same at this position? )
+			NIP		( len str1 str2 diff )
+			ROT		( len diff str1 str2 )
+			DROP DROP	( len diff )
+			NIP  		( diff )
+			EXIT
+		THEN
+
+		0= IF		( characters are equal, but is this the end of the C string? )
+			DROP DROP DROP
+			0
+			EXIT
+		THEN
+
+		1+		( len str1 str2+1 )
+		ROT		( str2+1 len str1 )
+		1+ ROT		( str1+1 str2+1 len )
+		1-		( str1+1 str2+1 len-1 )
+	REPEAT
+
+	2DROP		( restore stack )
+	0		( equal )
+;
+
+(
+	THE ENVIRONMENT ----------------------------------------------------------------------
+
+	Linux makes the process arguments and environment available to us on the stack.
+
+	The top of stack pointer is saved by the early assembler code when we start up in the FORTH
+	variable S0, and starting at this pointer we can read out the command line arguments and the
+	environment.
+
+	Starting at S0, S0 itself points to argc (the number of command line arguments).
+
+	S0+4 points to argv[0], S0+8 points to argv[1] etc up to argv[argc-1].
+
+	argv[argc] is a NULL pointer.
+
+	After that the stack contains environment variables, a set of pointers to strings of the
+	form NAME=VALUE and on until we get to another NULL pointer.
+
+	The first word that we define, ARGC, pushes the number of command line arguments (note that
+	as with C argc, this includes the name of the command).
+)
+: ARGC
+	S0 @ @
+;
+
+(
+	n ARGV gets the nth command line argument.
+
+	For example to print the command name you would do:
+		0 ARGV TELL CR
+)
+: ARGV ( n -- str u )
+	1+ CELLS S0 @ +	( get the address of argv[n] entry )
+	@		( get the address of the string )
+	DUP STRLEN	( and get its length / turn it into a FORTH string )
+;
+
+(
+	ENVIRON returns the address of the first environment string.  The list of strings ends
+	with a NULL pointer.
+
+	For example to print the first string in the environment you could do:
+		ENVIRON @ DUP STRLEN TELL
+)
+: ENVIRON	( -- addr )
+	ARGC		( number of command line parameters on the stack to skip )
+	2 +		( skip command line count and NULL pointer after the command line args )
+	CELLS		( convert to an offset )
+	S0 @ +		( add to base stack address )
+;
+
+(
+	ANS FORTH ----------------------------------------------------------------------
+
+	From this point we're trying to fill in the missing parts of the ISO standard, commonly
+	referred to as ANS FORTH.
+
+	http://www.taygeta.com/forth/dpans.html
+	http://www.taygeta.com/forth/dpansf.htm (list of words)
+)
+( BL pushes the ASCII character code of space on the stack. )
+: BL 32 ;
+
+( C, writes a byte at the HERE pointer. )
+: C, HERE @ C! 1 HERE +! ;
+
+
 
 ( Finally print the welcome prompt. )
 ." JONESFORTH VERSION " VERSION . CR
