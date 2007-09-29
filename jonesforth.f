@@ -2,7 +2,7 @@
 \	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 \	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 \	This is PUBLIC DOMAIN (see public domain release statement below).
-\	$Id: jonesforth.f,v 1.10 2007-09-29 16:06:27 rich Exp $
+\	$Id: jonesforth.f,v 1.11 2007-09-29 23:13:45 rich Exp $
 \
 \	The first part of this tutorial is in jonesforth.S.  Get if from http://annexia.org/forth
 \
@@ -51,14 +51,14 @@
 : MOD /MOD DROP ;
 
 \ Define some character constants
-: '\n'   10 ;
-: 'SPACE' 32 ;
+: '\n' 10 ;
+: BL   32 ; \ BL (BLank) is a standard FORTH word for space.
 
 \ CR prints a carriage return
 : CR '\n' EMIT ;
 
 \ SPACE prints a space
-: SPACE 'SPACE' EMIT ;
+: SPACE BL EMIT ;
 
 \ DUP, DROP are defined in assembly for speed, but this is how you might define them
 \ in FORTH.  Notice use of the scratch variables _X and _Y.
@@ -305,10 +305,8 @@
 ( This is the underlying recursive definition of U. )
 : U.		( u -- )
 	BASE @ /MOD	( width rem quot )
-	DUP 0<> IF	( if quotient <> 0 then )
+	?DUP IF			( if quotient <> 0 then )
 		RECURSE		( print the quotient )
-	ELSE
-		DROP		( drop the zero quotient )
 	THEN
 
 	( print the remainder )
@@ -341,10 +339,9 @@
 ( This word returns the width (in characters) of an unsigned number in the current base )
 : UWIDTH	( u -- width )
 	BASE @ /	( rem quot )
-	DUP 0<> IF	( if quotient <> 0 then )
+	?DUP IF		( if quotient <> 0 then )
 		RECURSE 1+	( return 1+recursive call )
 	ELSE
-		DROP		( drop the zero quotient )
 		1		( return 1 )
 	THEN
 ;
@@ -774,7 +771,7 @@
 : WORDS
 	LATEST @	( start at LATEST dictionary entry )
 	BEGIN
-		DUP 0<>		( while link pointer is not null )
+		?DUP		( while link pointer is not null )
 	WHILE
 		DUP ?HIDDEN NOT IF	( ignore hidden words )
 			DUP ID.		( but if not hidden, print the word )
@@ -782,7 +779,6 @@
 		SPACE
 		@		( dereference the link pointer - go to previous word )
 	REPEAT
-	DROP
 	CR
 ;
 
@@ -982,7 +978,7 @@
 : CFA>
 	LATEST @	( start at LATEST dictionary entry )
 	BEGIN
-		DUP 0<>		( while link pointer is not null )
+		?DUP		( while link pointer is not null )
 	WHILE
 		DUP >CFA	( cfa curr curr-cfa )
 		2 PICK		( cfa curr curr-cfa cfa )
@@ -992,7 +988,7 @@
 		THEN
 		@		( follow link pointer back )
 	REPEAT
-	2DROP		( restore stack )
+	DROP		( restore stack )
 	0		( sorry, nothing found )
 ;
 
@@ -1061,13 +1057,13 @@
 			." 0BRANCH ( "
 			4 + DUP @		( print the offset )
 			.
-			')' EMIT SPACE
+			." ) "
 		ENDOF
 		' BRANCH OF		( is it BRANCH ? )
 			." BRANCH ( "
 			4 + DUP @		( print the offset )
 			.
-			')' EMIT SPACE
+			." ) "
 		ENDOF
 		' ' OF			( is it ' (TICK) ? )
 			[ CHAR ' ] LITERAL EMIT SPACE
@@ -1100,43 +1096,6 @@
 ;
 
 (
-	DOES> ----------------------------------------------------------------------
-
-	CREATE ... DOES> is a tricky construct allowing you to create words which create other words.
-	For example CONSTANT (defined above) is a word which creates words, and it could have been
-	written as follows:
-
-		: CONSTANT CREATE DOCOL , , DOES> @ ;
-
-	Even explaining what DOES> is supposed to do is tricky.  It's possible that the implementation
-	is easier to understand than the explanation.
-
-	If we look at the definition of CONSTANT here, and remember that when it is called the value
-	of the constant is on the stack and the name follows.  So first CREATE makes the header of a
-	new word with the name.  Secondly the codeword is set to DOCOL.  Thirdly , (COMMA) takes the
-	value off the stack and adds it to the definition.  At this point (just before executing DOES>)
-	the word looks like this:
-
-	  ________ CREATE _______   _ DOCOL ,_   ____ , ___
-	 /                       \ /          \ /          \
-	+---------+---+---+---+---+------------+------------+
-	| LINK    | 3 | T | E | N | DOCOL      | 10         |
-	+---------+---+---+---+---+------------+------------+
-            ^      len              codeword
-	    |
-	  LATEST
-
-	
-)
-
-
-
-
-: DOES>
-	R> LATEST @ >DFA !
-;
-
-(
 	C STRINGS ----------------------------------------------------------------------
 
 	FORTH strings are represented by a start address and length kept on the stack or in memory.
@@ -1148,6 +1107,50 @@
 	a common idiom which 'converts' a C string into a FORTH string.  (For example, DUP STRLEN TELL
 	prints a C string).
 )
+
+(
+	Z" .." is like S" ..." except that the string is terminated by an ASCII NUL character.
+
+	To make it more like a C string, at runtime Z" just leaves the address of the string
+	on the stack (not address & length as with S").  To implement this we need to add the
+	extra NUL to the string and also a DROP instruction afterwards.  Apart from that the
+	implementation just a modified S".
+)
+: Z" IMMEDIATE
+	STATE @ IF	( compiling? )
+		' LITSTRING ,	( compile LITSTRING )
+		HERE @		( save the address of the length word on the stack )
+		0 ,		( dummy length - we don't know what it is yet )
+		BEGIN
+			KEY 		( get next character of the string )
+			DUP '"' <>
+		WHILE
+			HERE @ C!	( store the character in the compiled image )
+			1 HERE +!	( increment HERE pointer by 1 byte )
+		REPEAT
+		0 HERE @ C!	( add the ASCII NUL byte )
+		1 HERE +!
+		DROP		( drop the double quote character at the end )
+		DUP		( get the saved address of the length word )
+		HERE @ SWAP -	( calculate the length )
+		4-		( subtract 4 (because we measured from the start of the length word) )
+		SWAP !		( and back-fill the length location )
+		ALIGN		( round up to next multiple of 4 bytes for the remaining code )
+		' DROP ,	( compile DROP (to drop the length) )
+	ELSE		( immediate mode )
+		HERE @		( get the start address of the temporary space )
+		BEGIN
+			KEY
+			DUP '"' <>
+		WHILE
+			OVER C!		( save next character )
+			1+		( increment address )
+		REPEAT
+		DROP		( drop the final " character )
+		0 SWAP C!	( store final ASCII NUL )
+		HERE @		( push the start address )
+	THEN
+;
 
 ( STRLEN returns the length of a C string )
 : STRLEN 	( str -- len )
@@ -1251,6 +1254,54 @@
 ;
 
 (
+	SYSTEM CALLS ----------------------------------------------------------------------
+
+	Some wrappers around Linux system calls
+)
+
+( BYE exits by calling the Linux exit(2) syscall. )
+: BYE		( -- )
+	0
+	0
+	0		( return code (0) )
+	SYS_EXIT	( system call number )
+	SYSCALL3
+;
+
+(
+	OPEN, CREAT and CLOSE are just like the Linux syscalls open(2), creat(2) and close(2).
+
+	Notice that they take C strings and may return error codes (-errno).
+)
+: OPEN		( mode flags c-pathname -- ret )
+	SYS_OPEN
+	SYSCALL3
+;
+
+: CREAT		( mode c-pathname -- ret )
+	0 ROT
+	SYS_CREAT
+	SYSCALL3
+;
+
+: CLOSE		( fd -- ret )
+	0 ROT 0 ROT
+	SYS_CLOSE
+	SYSCALL3
+;
+
+( READ and WRITE system calls. )
+: READ		( len buffer fd -- ret )
+	SYS_READ
+	SYSCALL3
+;	
+
+: WRITE		( len buffer fd -- ret )
+	SYS_WRITE
+	SYSCALL3
+;	
+
+(
 	ANS FORTH ----------------------------------------------------------------------
 
 	From this point we're trying to fill in the missing parts of the ISO standard, commonly
@@ -1259,14 +1310,30 @@
 	http://www.taygeta.com/forth/dpans.html
 	http://www.taygeta.com/forth/dpansf.htm (list of words)
 )
-( BL pushes the ASCII character code of space on the stack. )
-: BL 32 ;
 
 ( C, writes a byte at the HERE pointer. )
 : C, HERE @ C! 1 HERE +! ;
 
 
 
-( Finally print the welcome prompt. )
+
+
+
+
+
+
+(
+	NOTES ----------------------------------------------------------------------
+
+	DOES> isn't possible to implement with this FORTH because we don't have a separate
+	data pointer.
+)
+
+(
+	WELCOME MESSAGE ----------------------------------------------------------------------
+
+	Print the version and OK prompt.
+)
+
 ." JONESFORTH VERSION " VERSION . CR
 ." OK "
