@@ -1,7 +1,7 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 	This is PUBLIC DOMAIN (see public domain release statement below).
-	$Id: jonesforth.S,v 1.39 2007-09-29 16:05:10 rich Exp $
+	$Id: jonesforth.S,v 1.40 2007-09-29 22:12:07 rich Exp $
 
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
 */
@@ -1119,7 +1119,7 @@ var_\name :
 */
 	defvar "STATE",5,,STATE
 	defvar "HERE",4,,HERE,user_defs_start
-	defvar "LATEST",6,,LATEST,name_SYSEXIT // SYSEXIT must be last in built-in dictionary
+	defvar "LATEST",6,,LATEST,name_SYSCALL3 // SYSCALL3 must be last in built-in dictionary
 	defvar "_X",2,,TX
 	defvar "_Y",2,,TY
 	defvar "_Z",2,,TZ
@@ -1140,7 +1140,12 @@ var_\name :
 	F_IMMED		The IMMEDIATE flag's actual value.
 	F_HIDDEN	The HIDDEN flag's actual value.
 	F_LENMASK	The length mask in the flags/len byte.
+
+	SYS_*		and the numeric codes of various Linux syscalls (from <asm/unistd.h>)
 */
+
+//#include <asm-i386/unistd.h>	// you might need this instead
+#include <asm/unistd.h>
 
 	.macro defconst name, namelen, flags=0, label, value
 	defcode \name,\namelen,\flags,\label
@@ -1154,6 +1159,13 @@ var_\name :
 	defconst "F_IMMED",7,,__F_IMMED,F_IMMED
 	defconst "F_HIDDEN",8,,__F_HIDDEN,F_HIDDEN
 	defconst "F_LENMASK",9,,__F_LENMASK,F_LENMASK
+
+	defconst "SYS_EXIT",8,,SYS_EXIT,__NR_exit
+	defconst "SYS_OPEN",8,,SYS_OPEN,__NR_open
+	defconst "SYS_CLOSE",9,,SYS_CLOSE,__NR_close
+	defconst "SYS_READ",8,,SYS_READ,__NR_read
+	defconst "SYS_WRITE",9,,SYS_WRITE,__NR_write
+	defconst "SYS_CREAT",9,,SYS_CREAT,__NR_creat
 
 /*
 	RETURN STACK ----------------------------------------------------------------------
@@ -1225,8 +1237,6 @@ var_\name :
 	it automatically.  The other thing that KEY does is if it detects that stdin has closed, it
 	exits the program, which is why when you hit ^D the FORTH system cleanly exits.
 */
-
-#include <asm-i386/unistd.h>
 
 	defcode "KEY",3,,KEY
 	call _KEY
@@ -1970,7 +1980,6 @@ _COMMA:
 	// COLD must not return (ie. must not call EXIT).
 	defword "COLD",4,,COLD
 	.int INTERPRETER	// call the interpreter loop (never returns)
-	.int LIT,1,SYSEXIT	// hmmm, but in case it does, exit(1).
 
 /* This interpreter is pretty simple, but remember that in FORTH you can always override
  * it later with a more powerful one!
@@ -2044,11 +2053,12 @@ interpret_is_lit:
 	CHAR puts the ASCII code of the first character of the following word on the stack.  For example
 	CHAR A puts 65 on the stack.
 
-	SYSEXIT exits the process using Linux exit syscall.
+	SYSCALL3 makes a standard Linux system call.  (See <asm/unistd.h> for a list of system call
+	numbers).  This is the form to use when the function takes up to three parameters.
 
-	In this FORTH, SYSEXIT must be the last word in the built-in (assembler) dictionary because we
+	In this FORTH, SYSCALL3 must be the last word in the built-in (assembler) dictionary because we
 	initialise the LATEST variable to point to it.  This means that if you want to extend the assembler
-	part, you must put new words before SYSEXIT, or else change how LATEST is initialised.
+	part, you must put new words before SYSCALL3, or else change how LATEST is initialised.
 */
 
 	defcode "CHAR",4,,CHAR
@@ -2058,11 +2068,14 @@ interpret_is_lit:
 	push %eax		// Push it onto the stack.
 	NEXT
 
-	// NB: SYSEXIT must be the last entry in the built-in dictionary.
-	defcode SYSEXIT,7,,SYSEXIT
-	pop %ebx
-	mov $__NR_exit,%eax
+	defcode "SYSCALL3",8,,SYSCALL3
+	pop %eax		// System call number (see <asm/unistd.h>)
+	pop %ebx		// First parameter.
+	pop %ecx		// Second parameter
+	pop %edx		// Third parameter
 	int $0x80
+	push %eax		// Result (negative for -errno)
+	NEXT
 
 /*
 	START OF FORTH CODE ----------------------------------------------------------------------
