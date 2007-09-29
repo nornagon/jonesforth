@@ -1,7 +1,7 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 	This is PUBLIC DOMAIN (see public domain release statement below).
-	$Id: jonesforth.S,v 1.40 2007-09-29 22:12:07 rich Exp $
+	$Id: jonesforth.S,v 1.41 2007-09-29 23:11:27 rich Exp $
 
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
 */
@@ -1166,6 +1166,15 @@ var_\name :
 	defconst "SYS_READ",8,,SYS_READ,__NR_read
 	defconst "SYS_WRITE",9,,SYS_WRITE,__NR_write
 	defconst "SYS_CREAT",9,,SYS_CREAT,__NR_creat
+
+	defconst "O_RDONLY",8,,__O_RDONLY,0
+	defconst "O_WRONLY",8,,__O_WRONLY,1
+	defconst "O_RDWR",6,,__O_RDWR,2
+	defconst "O_CREAT",7,,__O_CREAT,0100
+	defconst "O_EXCL",6,,__O_EXCL,0200
+	defconst "O_TRUNC",7,,__O_TRUNC,01000
+	defconst "O_APPEND",8,,__O_APPEND,02000
+	defconst "O_NONBLOCK",10,,__O_NONBLOCK,04000
 
 /*
 	RETURN STACK ----------------------------------------------------------------------
