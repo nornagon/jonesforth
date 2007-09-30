@@ -2,7 +2,7 @@
 \	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 \	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 \	This is PUBLIC DOMAIN (see public domain release statement below).
-\	$Id: jonesforth.f,v 1.11 2007-09-29 23:13:45 rich Exp $
+\	$Id: jonesforth.f,v 1.12 2007-09-30 14:37:00 rich Exp $
 \
 \	The first part of this tutorial is in jonesforth.S.  Get if from http://annexia.org/forth
 \
@@ -1285,7 +1285,7 @@
 ;
 
 : CLOSE		( fd -- ret )
-	0 ROT 0 ROT
+	0 SWAP 0 ROT
 	SYS_CLOSE
 	SYSCALL3
 ;
