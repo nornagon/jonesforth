@@ -2,7 +2,7 @@
 \	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 \	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 \	This is PUBLIC DOMAIN (see public domain release statement below).
-\	$Id: jonesforth.f,v 1.12 2007-09-30 14:37:00 rich Exp $
+\	$Id: jonesforth.f,v 1.13 2007-10-07 11:07:15 rich Exp $
 \
 \	The first part of this tutorial is in jonesforth.S.  Get if from http://annexia.org/forth
 \
@@ -59,11 +59,6 @@
 
 \ SPACE prints a space
 : SPACE BL EMIT ;
-
-\ DUP, DROP are defined in assembly for speed, but this is how you might define them
-\ in FORTH.  Notice use of the scratch variables _X and _Y.
-\ : DUP _X ! _X @ _X @ ;
-\ : DROP _X ! ;
 
 \ The 2... versions of the standard operators work on pairs of stack entries.  They're not used
 \ very commonly so not really worth writing in assembler.  Here is how they are defined in FORTH.
@@ -212,6 +207,19 @@
 	DUP
 	HERE @ SWAP -	\ calculate the offset2
 	SWAP !		\ and back-fill it in the original location
+;
+
+\ UNLESS is the same as IF but the test is reversed.
+\
+\ Note the use of [COMPILE]: Since IF is IMMEDIATE we don't want it to be executed while UNLESS
+\ is compiling, but while UNLESS is running (which happens to be when whatever word using UNLESS is
+\ being compiled -- whew!).  So we use [COMPILE] to reverse the effect of marking IF as immediate.
+\ This trick is generally used when we want to write our own control words without having to
+\ implement them all in terms of the primitives 0BRANCH and BRANCH, but instead reusing simpler
+\ control words like (in this instance) IF.
+: UNLESS IMMEDIATE
+	' NOT ,		\ compile NOT (to reverse the test)
+	[COMPILE] IF	\ continue by calling the normal IF
 ;
 
 \	COMMENTS ----------------------------------------------------------------------
@@ -456,6 +464,12 @@
 	case we put the string at HERE (but we _don't_ change HERE).  This is meant as a temporary
 	location, likely to be overwritten soon after.
 )
+( C, appends a byte to the current compiled word. )
+: C,
+	HERE @ C!	( store the character in the compiled image )
+	1 HERE +!	( increment HERE pointer by 1 byte )
+;
+
 : S" IMMEDIATE		( -- addr len )
 	STATE @ IF	( compiling? )
 		' LITSTRING ,	( compile LITSTRING )
@@ -465,8 +479,7 @@
 			KEY 		( get next character of the string )
 			DUP '"' <>
 		WHILE
-			HERE @ C!	( store the character in the compiled image )
-			1 HERE +!	( increment HERE pointer by 1 byte )
+			C,		( copy character )
 		REPEAT
 		DROP		( drop the double quote character at the end )
 		DUP		( get the saved address of the length word )
@@ -554,7 +567,8 @@
 	The trick is to define a new word for the variable itself (eg. if the variable was called
 	'VAR' then we would define a new word called VAR).  This is easy to do because we exposed
 	dictionary entry creation through the CREATE word (part of the definition of : above).
-	A call to CREATE TEN leaves the dictionary entry:
+	A call to WORD [TEN] CREATE (where [TEN] means that "TEN" is the next word in the input)
+	leaves the dictionary entry:
 
 				   +--- HERE
 				   |
@@ -580,7 +594,8 @@
 	assembler part which returns the value of the assembler symbol of the same name.
 )
 : CONSTANT
-	CREATE		( make the dictionary entry (the name follows CONSTANT) )
+	WORD		( get the name (the name follows CONSTANT) )
+	CREATE		( make the dictionary entry )
 	DOCOL ,		( append DOCOL (the codeword field of this word) )
 	' LIT ,		( append the codeword LIT )
 	,		( append the value on the top of the stack )
@@ -589,10 +604,10 @@
 
 (
 	VARIABLE is a little bit harder because we need somewhere to put the variable.  There is
-	nothing particularly special about the 'user definitions area' (the area of memory pointed
-	to by HERE where we have previously just stored new word definitions).  We can slice off
-	bits of this memory area to store anything we want, so one possible definition of
-	VARIABLE might create this:
+	nothing particularly special about the user memory (the area of memory pointed to by HERE
+	where we have previously just stored new word definitions).  We can slice off bits of this
+	memory area to store anything we want, so one possible definition of VARIABLE might create
+	this:
 
 	   +--------------------------------------------------------------+
 	   |								  |
@@ -605,7 +620,7 @@
 	where <var> is the place to store the variable, and <addr var> points back to it.
 
 	To make this more general let's define a couple of words which we can use to allocate
-	arbitrary memory from the user definitions area.
+	arbitrary memory from the user memory.
 
 	First ALLOT, where n ALLOT allocates n bytes of memory.  (Note when calling this that
 	it's a very good idea to make sure that n is a multiple of 4, or at least that next time
@@ -629,7 +644,7 @@
 )
 : VARIABLE
 	1 CELLS ALLOT	( allocate 1 cell of memory, push the pointer to this memory )
-	CREATE		( make the dictionary entry (the name follows VARIABLE) )
+	WORD CREATE	( make the dictionary entry (the name follows VARIABLE) )
 	DOCOL ,		( append DOCOL (the codeword field of this word) )
 	' LIT ,		( append the codeword LIT )
 	,		( append the pointer to the new memory )
@@ -687,7 +702,7 @@
 	way cannot be inlined).
 )
 : VALUE		( n -- )
-	CREATE		( make the dictionary entry (the name follows VALUE) )
+	WORD CREATE	( make the dictionary entry (the name follows VALUE) )
 	DOCOL ,		( append DOCOL )
 	' LIT ,		( append the codeword LIT )
 	,		( append the initial value )
@@ -775,8 +790,8 @@
 	WHILE
 		DUP ?HIDDEN NOT IF	( ignore hidden words )
 			DUP ID.		( but if not hidden, print the word )
+			SPACE
 		THEN
-		SPACE
 		@		( dereference the link pointer - go to previous word )
 	REPEAT
 	CR
@@ -967,11 +982,14 @@
 	DECOMPILER ----------------------------------------------------------------------
 
 	CFA> is the opposite of >CFA.  It takes a codeword and tries to find the matching
-	dictionary definition.
+	dictionary definition.  (In truth, it works with any pointer into a word, not just
+	the codeword pointer, and this is needed to do stack traces).
 
 	In this FORTH this is not so easy.  In fact we have to search through the dictionary
 	because we don't have a convenient back-pointer (as is often the case in other versions
-	of FORTH).
+	of FORTH).  Because of this search, CFA> should not be used when performance is critical,
+	so it is only used for debugging tools such as the decompiler and printing stack
+	traces.
 
 	This word returns 0 if it doesn't find a match.
 )
@@ -980,11 +998,10 @@
 	BEGIN
 		?DUP		( while link pointer is not null )
 	WHILE
-		DUP >CFA	( cfa curr curr-cfa )
-		2 PICK		( cfa curr curr-cfa cfa )
-		= IF		( found a match? )
+		2DUP SWAP	( cfa curr curr cfa )
+		< IF		( current dictionary entry < cfa? )
 			NIP		( leave curr dictionary entry on the stack )
-			EXIT		( and return from the function )
+			EXIT
 		THEN
 		@		( follow link pointer back )
 	REPEAT
@@ -1096,16 +1113,284 @@
 ;
 
 (
+	EXECUTION TOKENS ----------------------------------------------------------------------
+
+	Standard FORTH defines a concept called an 'execution token' (or 'xt') which is very
+	similar to a function pointer in C.  We map the execution token to a codeword address.
+
+			execution token of DOUBLE is the address of this codeword
+						    |
+						    V
+	+---------+---+---+---+---+---+---+---+---+------------+------------+------------+------------+
+	| LINK    | 6 | D | O | U | B | L | E | 0 | DOCOL      | DUP        | +          | EXIT       |
+	+---------+---+---+---+---+---+---+---+---+------------+------------+------------+------------+
+                   len                         pad  codeword					       ^
+
+	There is one assembler primitive for execution tokens, EXECUTE ( xt -- ), which runs them.
+
+	You can make an execution token for an existing word the long way using >CFA,
+	ie: WORD [foo] FIND >CFA will push the xt for foo onto the stack where foo is the
+	next word in input.  So a very slow way to run DOUBLE might be:
+
+		: DOUBLE DUP + ;
+		: SLOW WORD FIND >CFA EXECUTE ;
+		5 SLOW DOUBLE . CR	\ prints 10
+
+	We also offer a simpler and faster way to get the execution token of any word FOO:
+
+		['] FOO
+
+	(Exercises for readers: (1) What is the difference between ['] FOO and ' FOO?
+	(2) What is the relationship between ', ['] and LIT?)
+
+	More useful is to define anonymous words and/or to assign xt's to variables.
+
+	To define an anonymous word (and push its xt on the stack) use :NONAME ... ; as in this
+	example:
+
+		:NONAME ." anon word was called" CR ;	\ pushes xt on the stack
+		DUP EXECUTE EXECUTE			\ executes the anon word twice
+
+	Stack parameters work as expected:
+
+		:NONAME ." called with parameter " . CR ;
+		DUP
+		10 SWAP EXECUTE		\ prints 'called with parameter 10'
+		20 SWAP EXECUTE		\ prints 'called with parameter 20'
+
+	Notice that the above code has a memory leak: the anonymous word is still compiled
+	into the data segment, so even if you lose track of the xt, the word continues to
+	occupy memory.  A good way to keep track of the xt and thus avoid the memory leak is
+	to assign it to a CONSTANT, VARIABLE or VALUE:
+
+		0 VALUE ANON
+		:NONAME ." anon word was called" CR ; TO ANON
+		ANON EXECUTE
+		ANON EXECUTE
+
+	Another use of :NONAME is to create an array of functions which can be called quickly
+	(think: fast switch statement).  This example is adapted from the ANS FORTH standard:
+
+		10 CELLS ALLOT CONSTANT CMD-TABLE
+		: SET-CMD CELLS CMD-TABLE + ! ;
+		: CALL-CMD CELLS CMD-TABLE + @ EXECUTE ;
+
+		:NONAME ." alternate 0 was called" CR ;	 0 SET-CMD
+		:NONAME ." alternate 1 was called" CR ;	 1 SET-CMD
+			\ etc...
+		:NONAME ." alternate 9 was called" CR ;	 9 SET-CMD
+
+		0 CALL-CMD
+		1 CALL-CMD
+)
+
+: :NONAME
+	0 0 CREATE	( create a word with no name - we need a dictionary header because ; expects it )
+	HERE @		( current HERE value is the address of the codeword, ie. the xt )
+	DOCOL ,		( compile DOCOL (the codeword) )
+	]		( go into compile mode )
+;
+
+: ['] IMMEDIATE
+	' LIT ,		( compile LIT )
+;
+
+(
+	EXCEPTIONS ----------------------------------------------------------------------
+
+	Amazingly enough, exceptions can be implemented directly in FORTH, in fact rather easily.
+
+	The general usage is as follows:
+
+		: FOO ( n -- ) THROW ;
+
+		: TEST-EXCEPTIONS
+			25 ['] FOO CATCH	\ execute 25 FOO, catching any exception
+			?DUP IF
+				." called FOO and it threw exception number: "
+				. CR
+				DROP		\ we have to drop the argument of FOO (25)
+			THEN
+		;
+		\ prints: called FOO and it threw exception number: 25
+
+	CATCH runs an execution token and detects whether it throws any exception or not.  The
+	stack signature of CATCH is rather complicated:
+
+		( a_n-1 ... a_1 a_0 xt -- r_m-1 ... r_1 r_0 0 )		if xt did NOT throw an exception
+		( a_n-1 ... a_1 a_0 xt -- ?_n-1 ... ?_1 ?_0 e )		if xt DID throw exception 'e'
+
+	where a_i and r_i are the (arbitrary number of) argument and return stack contents
+	before and after xt is EXECUTEd.  Notice in particular the case where an exception
+	is thrown, the stack pointer is restored so that there are n of _something_ on the
+	stack in the positions where the arguments a_i used to be.  We don't really guarantee
+	what is on the stack -- perhaps the original arguments, and perhaps other nonsense --
+	it largely depends on the implementation of the word that was executed.
+
+	THROW, ABORT and a few others throw exceptions.
+
+	Exception numbers are non-zero integers.  By convention the positive numbers can be used
+	for app-specific exceptions and the negative numbers have certain meanings defined in
+	the ANS FORTH standard.  (For example, -1 is the exception thrown by ABORT).
+
+	0 THROW does nothing.  This is the stack signature of THROW:
+
+		( 0 -- )
+		( * e -- ?_n-1 ... ?_1 ?_0 e )	the stack is restored to the state from the corresponding CATCH
+
+	The implementation hangs on the definitions of CATCH and THROW and the state shared
+	between them.
+
+	Up to this point, the return stack has consisted merely of a list of return addresses,
+	with the top of the return stack being the return address where we will resume executing
+	when the current word EXITs.  However CATCH will push a more complicated 'exception stack
+	frame' on the return stack.  The exception stack frame records some things about the
+	state of execution at the time that CATCH was called.
+
+	When called, THROW walks up the return stack (the process is called 'unwinding') until
+	it finds the exception stack frame.  It then uses the data in the exception stack frame
+	to restore the state allowing execution to continue after the matching CATCH.  (If it
+	unwinds the stack and doesn't find the exception stack frame then it prints a message
+	and drops back to the prompt, which is also normal behaviour for so-called 'uncaught
+	exceptions').
+
+	This is what the exception stack frame looks like.  (As is conventional, the return stack
+	is shown growing downwards from higher to lower memory addresses).
+
+		+------------------------------+
+		| return address from CATCH    |   Notice this is already on the
+		|                              |   return stack when CATCH is called.
+		+------------------------------+
+		| original parameter stack     |
+		| pointer                      |
+		+------------------------------+  ^
+		| exception stack marker       |  |
+		| (EXCEPTION-MARKER)           |  |   Direction of stack
+		+------------------------------+  |   unwinding by THROW.
+						  |
+						  |
+
+	The EXCEPTION-MARKER marks the entry as being an exception stack frame rather than an
+	ordinary return address, and it is this which THROW "notices" as it is unwinding the
+	stack.  (If you want to implement more advanced exceptions such as TRY...WITH then
+	you'll need to use a different value of marker if you want the old and new exception stack
+	frame layouts to coexist).
+
+	What happens if the executed word doesn't throw an exception?  It will eventually
+	return and call EXCEPTION-MARKER, so EXCEPTION-MARKER had better do something sensible
+	without us needing to modify EXIT.  This nicely gives us a suitable definition of
+	EXCEPTION-MARKER, namely a function that just drops the stack frame and itself
+	returns (thus "returning" from the original CATCH).
+
+	One thing to take from this is that exceptions are a relatively lightweight mechanism
+	in FORTH.
+)
+
+: EXCEPTION-MARKER
+	RDROP			( drop the original parameter stack pointer )
+	0			( there was no exception, this is the normal return path )
+;
+
+: CATCH		( xt -- exn? )
+	DSP@ 4+ >R		( save parameter stack pointer (+4 because of xt) on the return stack )
+	' EXCEPTION-MARKER 4+	( push the address of the RDROP inside EXCEPTION-MARKER ... )
+	>R			( ... on to the return stack so it acts like a return address )
+	EXECUTE			( execute the nested function )
+;
+
+: THROW		( n -- )
+	?DUP IF			( only act if the exception code <> 0 )
+		RSP@ 			( get return stack pointer )
+		BEGIN
+			DUP R0 4- <		( RSP < R0 )
+		WHILE
+			DUP @			( get the return stack entry )
+			' EXCEPTION-MARKER 4+ = IF	( found the EXCEPTION-MARKER on the return stack )
+				4+			( skip the EXCEPTION-MARKER on the return stack )
+				RSP!			( restore the return stack pointer )
+
+				( Restore the parameter stack. )
+				DUP DUP DUP		( reserve some working space so the stack for this word
+							  doesn't coincide with the part of the stack being restored )
+				R>			( get the saved parameter stack pointer | n dsp )
+				4-			( reserve space on the stack to store n )
+				SWAP OVER		( dsp n dsp )
+				!			( write n on the stack )
+				DSP! EXIT		( restore the parameter stack pointer, immediately exit )
+			THEN
+			4+
+		REPEAT
+
+		( No matching catch - print a message and restart the INTERPRETer. )
+		DROP
+
+		CASE
+		0 1- OF	( ABORT )
+			." ABORTED" CR
+		ENDOF
+			( default case )
+			." UNCAUGHT THROW "
+			DUP . CR
+		ENDCASE
+		QUIT
+	THEN
+;
+
+: ABORT		( -- )
+	0 1- THROW
+;
+
+( Print a stack trace by walking up the return stack. )
+: PRINT-STACK-TRACE
+	RSP@				( start at caller of this function )
+	BEGIN
+		DUP R0 4- <		( RSP < R0 )
+	WHILE
+		DUP @			( get the return stack entry )
+		CASE
+		' EXCEPTION-MARKER 4+ OF	( is it the exception stack frame? )
+			." CATCH ( DSP="
+			4+ DUP @ U.		( print saved stack pointer )
+			." ) "
+		ENDOF
+						( default case )
+			DUP
+			CFA>			( look up the codeword to get the dictionary entry )
+			?DUP IF			( and print it )
+				2DUP			( dea addr dea )
+				ID.			( print word from dictionary entry )
+				[ CHAR + ] LITERAL EMIT
+				SWAP >DFA 4+ - .	( print offset )
+			THEN
+		ENDCASE
+		4+			( move up the stack )
+	REPEAT
+	DROP
+	CR
+;
+
+(
 	C STRINGS ----------------------------------------------------------------------
 
 	FORTH strings are represented by a start address and length kept on the stack or in memory.
 
 	Most FORTHs don't handle C strings, but we need them in order to access the process arguments
-	and environment left on the stack by the Linux kernel.
+	and environment left on the stack by the Linux kernel, and to make some system calls.
 
-	The main function we need is STRLEN which works out the length of a C string.  DUP STRLEN is
-	a common idiom which 'converts' a C string into a FORTH string.  (For example, DUP STRLEN TELL
-	prints a C string).
+	Operation	Input		Output		FORTH word	Notes
+	----------------------------------------------------------------------
+
+	Create FORTH string		addr len	S" ..."
+
+	Create C string			c-addr		Z" ..."
+
+	C -> FORTH	c-addr		addr len	DUP STRLEN
+
+	FORTH -> C	addr len	c-addr		CSTRING		Allocated in a temporary buffer, so
+									should be consumed / copied immediately.
+									FORTH string should not contain NULs.
+
+	For example, DUP STRLEN TELL prints a C string.
 )
 
 (
@@ -1152,7 +1437,6 @@
 	THEN
 ;
 
-( STRLEN returns the length of a C string )
 : STRLEN 	( str -- len )
 	DUP		( save start address )
 	BEGIN
@@ -1164,42 +1448,15 @@
 	SWAP -		( calculate the length )
 ;
 
-(
-	STRNCMP compares two strings up to a length.  As with C's strncmp it returns 0 if they
-	are equal, or a number > 0 or < 0 indicating their order.
-)
-: STRNCMP	( str1 str2 len -- eq? )
-	BEGIN
-		?DUP
-	WHILE
-		ROT		( len str1 str2 )
-		DUP C@		( len str1 str2 char2 )
-		2 PICK C@	( len str1 str2 char2 char1 )
-		OVER   		( len str1 str2 char2 char1 char2 )
-		-		( len str1 str2 char2 char1-char2 )
+: CSTRING	( addr len -- c-addr )
+	SWAP OVER	( len saddr len )
+	HERE @ SWAP	( len saddr daddr len )
+	CMOVE		( len )
 
-		?DUP IF		( strings not the same at this position? )
-			NIP		( len str1 str2 diff )
-			ROT		( len diff str1 str2 )
-			DROP DROP	( len diff )
-			NIP  		( diff )
-			EXIT
-		THEN
+	HERE @ +	( daddr+len )
+	0 SWAP C!	( store terminating NUL char )
 
-		0= IF		( characters are equal, but is this the end of the C string? )
-			DROP DROP DROP
-			0
-			EXIT
-		THEN
-
-		1+		( len str1 str2+1 )
-		ROT		( str2+1 len str1 )
-		1+ ROT		( str1+1 str2+1 len )
-		1-		( str1+1 str2+1 len-1 )
-	REPEAT
-
-	2DROP		( restore stack )
-	0		( equal )
+	HERE @ 		( push start address )
 ;
 
 (
@@ -1254,73 +1511,124 @@
 ;
 
 (
-	SYSTEM CALLS ----------------------------------------------------------------------
+	SYSTEM CALLS AND FILES  ----------------------------------------------------------------------
 
-	Some wrappers around Linux system calls
+	Miscellaneous words related to system calls, and standard access to files.
 )
 
 ( BYE exits by calling the Linux exit(2) syscall. )
 : BYE		( -- )
-	0
-	0
 	0		( return code (0) )
 	SYS_EXIT	( system call number )
-	SYSCALL3
+	SYSCALL1
 ;
 
 (
-	OPEN, CREAT and CLOSE are just like the Linux syscalls open(2), creat(2) and close(2).
+	UNUSED returns the number of cells remaining in the user memory (data segment).
 
-	Notice that they take C strings and may return error codes (-errno).
+	For our implementation we will use Linux brk(2) system call to find out the end
+	of the data segment and subtract HERE from it.
 )
-: OPEN		( mode flags c-pathname -- ret )
-	SYS_OPEN
-	SYSCALL3
+: GET-BRK	( -- brkpoint )
+	0 SYS_BRK SYSCALL1	( call brk(0) )
 ;
 
-: CREAT		( mode c-pathname -- ret )
-	0 ROT
-	SYS_CREAT
-	SYSCALL3
+: UNUSED	( -- n )
+	GET-BRK		( get end of data segment according to the kernel )
+	HERE @		( get current position in data segment )
+	-
+	4 /		( returns number of cells )
 ;
-
-: CLOSE		( fd -- ret )
-	0 SWAP 0 ROT
-	SYS_CLOSE
-	SYSCALL3
-;
-
-( READ and WRITE system calls. )
-: READ		( len buffer fd -- ret )
-	SYS_READ
-	SYSCALL3
-;	
-
-: WRITE		( len buffer fd -- ret )
-	SYS_WRITE
-	SYSCALL3
-;	
 
 (
-	ANS FORTH ----------------------------------------------------------------------
+	MORECORE increases the data segment by the specified number of (4 byte) cells.
 
-	From this point we're trying to fill in the missing parts of the ISO standard, commonly
-	referred to as ANS FORTH.
+	NB. The number of cells requested should normally be a multiple of 1024.  The
+	reason is that Linux can't extend the data segment by less than a single page
+	(4096 bytes or 1024 cells).
 
-	http://www.taygeta.com/forth/dpans.html
-	http://www.taygeta.com/forth/dpansf.htm (list of words)
+	This FORTH doesn't automatically increase the size of the data segment "on demand"
+	(ie. when , (COMMA), ALLOT, CREATE, and so on are used).  Instead the programmer
+	needs to be aware of how much space a large allocation will take, check UNUSED, and
+	call MORECORE if necessary.  A simple programming exercise is to change the
+	implementation of the data segment so that MORECORE is called automatically if
+	the program needs more memory.
+)
+: BRK		( brkpoint -- )
+	SYS_BRK SYSCALL1
+;
+
+: MORECORE	( cells -- )
+	CELLS GET-BRK + BRK
+;
+
+(
+	Standard FORTH provides some simple file access primitives which we model on
+	top of Linux syscalls.
+
+	The main complication is converting FORTH strings (address & length) into C
+	strings for the Linux kernel.
+
+	Notice there is no buffering in this implementation.
 )
 
-( C, writes a byte at the HERE pointer. )
-: C, HERE @ C! 1 HERE +! ;
+: R/O ( -- fam ) O_RDONLY ;
+: R/W ( -- fam ) O_RDWR ;
 
+: OPEN-FILE	( addr u fam -- fd 0 (if successful) | c-addr u fam -- fd errno (if there was an error) )
+	ROT		( fam addr u )
+	CSTRING		( fam cstring )
+	SYS_OPEN SYSCALL2 ( open (filename, flags) )
+	DUP		( fd fd )
+	DUP 0< IF	( errno? )
+		NEGATE		( fd errno )
+	ELSE
+		DROP 0		( fd 0 )
+	THEN
+;
 
+: CREATE-FILE	( addr u fam -- fd 0 (if successful) | c-addr u fam -- fd errno (if there was an error) )
+	O_CREAT OR
+	O_TRUNC OR
+	ROT		( fam addr u )
+	CSTRING		( fam cstring )
+	420 ROT		( 0644 fam cstring )
+	SYS_OPEN SYSCALL3 ( open (filename, flags|O_TRUNC|O_CREAT, 0644) )
+	DUP		( fd fd )
+	DUP 0< IF	( errno? )
+		NEGATE		( fd errno )
+	ELSE
+		DROP 0		( fd 0 )
+	THEN
+;
 
+: CLOSE-FILE	( fd -- 0 (if successful) | fd -- errno (if there was an error) )
+	SYS_CLOSE SYSCALL1
+	NEGATE
+;
 
+: READ-FILE	( addr u fd -- u2 0 (if successful) | addr u fd -- 0 0 (if EOF) | addr u fd -- u2 errno (if error) )
+	ROT SWAP -ROT	( u addr fd )
+	SYS_READ SYSCALL3
 
+	DUP		( u2 u2 )
+	DUP 0< IF	( errno? )
+		NEGATE		( u2 errno )
+	ELSE
+		DROP 0		( u2 0 )
+	THEN
+;
 
-
-
+(
+	PERROR prints a message for an errno, similar to C's perror(3) but we don't have the extensive
+	list of strerror strings available, so all we can do is print the errno.
+)
+: PERROR	( errno addr u -- )
+	TELL
+	':' EMIT SPACE
+	." ERRNO="
+	. CR
+;
 
 (
 	NOTES ----------------------------------------------------------------------
@@ -1335,5 +1643,13 @@
 	Print the version and OK prompt.
 )
 
-." JONESFORTH VERSION " VERSION . CR
-." OK "
+: WELCOME
+	S" TEST-MODE" FIND NOT IF
+		." JONESFORTH VERSION " VERSION . CR
+		UNUSED . ." CELLS REMAINING" CR
+		." OK "
+	THEN
+;
+
+WELCOME
+HIDE WELCOME

@@ -1,0 +1,9 @@
+( -*- text -*- )
+
+: TEST4 PRINT-STACK-TRACE ;
+
+: TEST3 TEST4 1 2 + . CR TEST4 ;
+
+: TEST2 TEST3 TEST3 ;
+
+: TEST TEST2 ;

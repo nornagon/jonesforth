@@ -1,10 +1,34 @@
-# $Id: Makefile,v 1.5 2007-09-29 16:04:20 rich Exp $
+# $Id: Makefile,v 1.6 2007-10-07 11:07:15 rich Exp $
 
-all:
-	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
+SHELL	:= /bin/bash
+
+all:	jonesforth
+
+jonesforth: jonesforth.S
+	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -Wl,--build-id=none -o $@ $<
 
 run:
-	cat jonesforth.f - | ./jonesforth
+	cat jonesforth.f $(PROG) - | ./jonesforth
+
+clean:
+	rm -f jonesforth *~ core .test_*
+
+TESTS	:= $(patsubst %.f,%.test,$(wildcard test_*.f))
+
+test check: $(TESTS)
+
+test_%.test: test_%.f jonesforth
+	@echo -n "$< ... "
+	@rm -f .$@
+	@cat <(echo ': TEST-MODE ;') jonesforth.f $< <(echo 'TEST') | \
+	  ./jonesforth 2>&1 | \
+	  sed 's/DSP=[0-9]*//g' > .$@
+	@diff -u .$@ $<.out
+	@rm -f .$@
+	@echo "ok"
+
+.SUFFIXES: .f .test
+.PHONY: test check
 
 remote:
 	scp jonesforth.S jonesforth.f rjones@oirase:Desktop/

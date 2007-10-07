@@ -1,11 +1,11 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 	This is PUBLIC DOMAIN (see public domain release statement below).
-	$Id: jonesforth.S,v 1.41 2007-09-29 23:11:27 rich Exp $
+	$Id: jonesforth.S,v 1.42 2007-10-07 11:07:15 rich Exp $
 
-	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
+	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -Wl,--build-id=none -o jonesforth jonesforth.S
 */
-	.set JONES_VERSION,39
+	.set JONES_VERSION,42
 /*
 	INTRODUCTION ----------------------------------------------------------------------
 
@@ -121,7 +121,7 @@
 	Again, to assemble this you will need gcc and gas (the GNU assembler).  The commands to
 	assemble and run the code (save this file as 'jonesforth.S') are:
 
-	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -o jonesforth jonesforth.S
+	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -Wl,--build-id=none -o jonesforth jonesforth.S
 	cat jonesforth.f - | ./jonesforth
 
 	If you want to run your own FORTH programs you can do:
@@ -553,56 +553,27 @@ stack points ->	| addr of DOUBLE   |	   + 4 =   +------------------+
 
 	This is what the set up code does.  Does a tiny bit of house-keeping, sets up the
 	separate return stack (NB: Linux gives us the ordinary parameter stack already), then
-	immediately jumps to a FORTH word called COLD.  COLD stands for cold-start.  In ISO
-	FORTH (but not in this FORTH), COLD can be called at any time to completely reset
-	the state of FORTH, and there is another word called WARM which does a partial reset.
+	immediately jumps to a FORTH word called QUIT.  Despite its name, QUIT doesn't quit
+	anything.  It resets some internal state and starts reading and interpreting commands.
+	(The reason it is called QUIT is because you can call QUIT from your own FORTH code
+	to "quit" your program and go back to interpreting).
 */
 
-/* ELF entry point. */
+/* Assembler entry point. */
 	.text
 	.globl _start
 _start:
 	cld
-	mov %esp,var_S0		// Store the initial data stack pointer.
-	mov $return_stack,%ebp	// Initialise the return stack.
+	mov %esp,var_S0		// Save the initial data stack pointer in FORTH variable S0.
+	mov $return_stack_top,%ebp // Initialise the return stack.
+	call set_up_data_segment
 
 	mov $cold_start,%esi	// Initialise interpreter.
 	NEXT			// Run interpreter!
 
 	.section .rodata
 cold_start:			// High-level code without a codeword.
-	.int COLD
-
-/*
-	We also allocate some space for the return stack and some space to store user
-	definitions.  These are static memory allocations using fixed-size buffers, but it
-	wouldn't be a great deal of work to make them dynamic.
-*/
-
-	.bss
-/* FORTH return stack. */
-	.set RETURN_STACK_SIZE,8192
-	.align 4096
-	.space RETURN_STACK_SIZE
-return_stack:			// Initial top of return stack.
-
-/* The user definitions area: space for user-defined words and general memory allocations. */
-	.set USER_DEFS_SIZE,65536
-	.align 4096
-user_defs_start:
-	.space USER_DEFS_SIZE
-
-/* This is used as a temporary input buffer when reading from files or the terminal. */
-	.set BUFFER_SIZE,4096
-	.align 4096
-buffer:
-_initbufftop:
-	.space BUFFER_SIZE
-buffend:
-currkey:
-	.int buffer
-bufftop:
-	.int _initbufftop
+	.int QUIT
 
 /*
 	BUILT-IN WORDS ----------------------------------------------------------------------
@@ -664,7 +635,7 @@ name_\label :
 	.set link,name_\label
 	.byte \flags+\namelen	// flags + length byte
 	.ascii "\name"		// the name
-	.align 4
+	.align 4		// padding to next 4 byte boundary
 	.globl \label
 \label :
 	.int DOCOL		// codeword - the interpreter
@@ -701,12 +672,12 @@ name_\label :
 	.set link,name_\label
 	.byte \flags+\namelen	// flags + length byte
 	.ascii "\name"		// the name
-	.align 4
+	.align 4		// padding to next 4 byte boundary
 	.globl \label
 \label :
 	.int code_\label	// codeword
 	.text
-	.align 4
+	//.align 4
 	.globl code_\label
 code_\label :			// assembler code follows
 	.endm
@@ -717,21 +688,20 @@ code_\label :			// assembler code follows
 	you can skip the details.
 */
 
-	defcode "DUP",3,,DUP
-	pop %eax		// duplicate top of stack
-	push %eax
-	push %eax
-	NEXT
-
 	defcode "DROP",4,,DROP
 	pop %eax		// drop top of stack
 	NEXT
 
 	defcode "SWAP",4,,SWAP
-	pop %eax		// swap top of stack
+	pop %eax		// swap top two elements on stack
 	pop %ebx
 	push %eax
 	push %ebx
+	NEXT
+
+	defcode "DUP",3,,DUP
+	mov (%esp),%eax		// duplicate top of stack
+	push %eax
 	NEXT
 
 	defcode "OVER",4,,OVER
@@ -758,12 +728,11 @@ code_\label :			// assembler code follows
 	NEXT
 
 	defcode "?DUP",4,,QDUP	// duplicate top of stack if non-zero
-	pop %eax
+	movl (%esp),%eax
 	test %eax,%eax
 	jz 1f
 	push %eax
-1:	push %eax
-	NEXT
+1:	NEXT
 
 	defcode "1+",2,,INCR
 	incl (%esp)		// increment top of stack
@@ -801,7 +770,7 @@ code_\label :			// assembler code follows
 /*
 	In this FORTH, only /MOD is primitive.  Later we will define the / and MOD words in
 	terms of the primitive /MOD.  The design of the i386 assembly instruction idiv which
-	leaves both quotient and remainder makes this obvious choice.
+	leaves both quotient and remainder makes this the obvious choice.
 */
 
 	defcode "/MOD",4,,DIVMOD
@@ -813,118 +782,115 @@ code_\label :			// assembler code follows
 	push %eax		// push quotient
 	NEXT
 
+/*
+	Lots of comparison operations.
+
+	ANS FORTH says that the comparison words should return all (binary) 1's for
+	TRUE and all 0's for FALSE.  However this is a bit of a strange convention
+	so this FORTH breaks it and returns the more normal (for C programmers ...)
+	1 meaning TRUE and 0 meaning FALSE.
+*/
+
 	defcode "=",1,,EQU	// top two words are equal?
 	pop %eax
 	pop %ebx
 	cmp %ebx,%eax
-	je 1f
-	pushl $0
-	NEXT
-1:	pushl $1
+	sete %al
+	movzbl %al,%eax
+	pushl %eax
 	NEXT
 
 	defcode "<>",2,,NEQU	// top two words are not equal?
 	pop %eax
 	pop %ebx
 	cmp %ebx,%eax
-	je 1f
-	pushl $1
-	NEXT
-1:	pushl $0
+	setne %al
+	movzbl %al,%eax
+	pushl %eax
 	NEXT
 
 	defcode "<",1,,LT
 	pop %eax
 	pop %ebx
 	cmp %eax,%ebx
-	jl 1f
-	pushl $0
-	NEXT
-1:	pushl $1
+	setl %al
+	movzbl %al,%eax
+	pushl %eax
 	NEXT
 
 	defcode ">",1,,GT
 	pop %eax
 	pop %ebx
 	cmp %eax,%ebx
-	jg 1f
-	pushl $0
-	NEXT
-1:	pushl $1
+	setg %al
+	movzbl %al,%eax
+	pushl %eax
 	NEXT
 
 	defcode "<=",2,,LE
 	pop %eax
 	pop %ebx
 	cmp %eax,%ebx
-	jle 1f
-	pushl $0
-	NEXT
-1:	pushl $1
+	setle %al
+	movzbl %al,%eax
+	pushl %eax
 	NEXT
 
 	defcode ">=",2,,GE
 	pop %eax
 	pop %ebx
 	cmp %eax,%ebx
-	jge 1f
-	pushl $0
-	NEXT
-1:	pushl $1
+	setge %al
+	movzbl %al,%eax
+	pushl %eax
 	NEXT
 
 	defcode "0=",2,,ZEQU	// top of stack equals 0?
 	pop %eax
 	test %eax,%eax
-	jz 1f
-	pushl $0
-	NEXT
-1:	pushl $1
+	setz %al
+	movzbl %al,%eax
+	pushl %eax
 	NEXT
 
 	defcode "0<>",3,,ZNEQU	// top of stack not 0?
 	pop %eax
 	test %eax,%eax
-	jnz 1f
-	pushl $0
-	NEXT
-1:	pushl $1
+	setnz %al
+	movzbl %al,%eax
+	pushl %eax
 	NEXT
 
 	defcode "0<",2,,ZLT	// comparisons with 0
 	pop %eax
 	test %eax,%eax
-	jl 1f
-	pushl $0
-	NEXT
-1:	pushl $1
+	setl %al
+	movzbl %al,%eax
+	pushl %eax
 	NEXT
 
 	defcode "0>",2,,ZGT
 	pop %eax
 	test %eax,%eax
-	jg 1f
-	pushl $0
-	NEXT
-1:	pushl $1
+	setg %al
+	movzbl %al,%eax
+	pushl %eax
 	NEXT
 
 	defcode "0<=",3,,ZLE
 	pop %eax
 	test %eax,%eax
-	jle 1f
-	pushl $0
-	NEXT
-1:	pushl $1
+	setle %al
+	movzbl %al,%eax
+	pushl %eax
 	NEXT
 
 	defcode "0>=",3,,ZGE
 	pop %eax
 	test %eax,%eax
-	jge 1f
-	pushl $0
-	NEXT
-1:	pushl $1
+	setge %al
+	movzbl %al,%eax
+	pushl %eax
 	NEXT
 
 	defcode "AND",3,,AND	// bitwise AND
@@ -942,7 +908,7 @@ code_\label :			// assembler code follows
 	xorl %eax,(%esp)
 	NEXT
 
-	defcode "INVERT",6,,INVERT // this is the FORTH bitwise "NOT" function (cf. NEGATE)
+	defcode "INVERT",6,,INVERT // this is the FORTH bitwise "NOT" function (cf. NEGATE and NOT)
 	notl (%esp)
 	NEXT
 
@@ -1011,8 +977,8 @@ code_\label :			// assembler code follows
 	+---------------------------+-------+-------+-------+-------+-------+
 
 	LIT is executed in the normal way, but what it does next is definitely not normal.  It
-	looks at %esi (which now points to the literal 2), grabs it, pushes it on the stack, then
-	manipulates %esi in order to skip the literal as if it had never been there.
+	looks at %esi (which now points to the number 2), grabs it, pushes it on the stack, then
+	manipulates %esi in order to skip the number as if it had never been there.
 
 	What's neat is that the whole grab/manipulate can be done using a single byte single
 	i386 instruction, our old friend LODSL.  Rather than me drawing more ASCII-art diagrams,
@@ -1079,6 +1045,26 @@ code_\label :			// assembler code follows
 	push %eax		// push value onto stack
 	NEXT
 
+/* C@C! is a useful byte copy primitive. */
+	defcode "C@C!",4,,CCOPY
+	movl 4(%esp),%ebx	// source address
+	movb (%ebx),%al		// get source character
+	pop %edi		// destination address
+	stosb			// copy to destination
+	push %edi		// increment destination address
+	incl 4(%esp)		// increment source address
+	NEXT
+
+/* and CMOVE is a block copy operation. */
+	defcode "CMOVE",5,,CMOVE
+	mov %esi,%edx		// preserve %esi
+	pop %ecx		// length
+	pop %edi		// destination address
+	pop %esi		// source address
+	rep movsb		// copy source to destination
+	mov %edx,%esi		// restore %esi
+	NEXT
+
 /*
 	BUILT-IN VARIABLES ----------------------------------------------------------------------
 
@@ -1110,19 +1096,13 @@ var_\name :
 	STATE		Is the interpreter executing code (0) or compiling a word (non-zero)?
 	LATEST		Points to the latest (most recently defined) word in the dictionary.
 	HERE		Points to the next free byte of memory.  When compiling, compiled words go here.
-	_X		These are three scratch variables, used by some standard dictionary words.
-	_Y
-	_Z
 	S0		Stores the address of the top of the parameter stack.
 	BASE		The current base for printing and reading numbers.
 
 */
 	defvar "STATE",5,,STATE
-	defvar "HERE",4,,HERE,user_defs_start
-	defvar "LATEST",6,,LATEST,name_SYSCALL3 // SYSCALL3 must be last in built-in dictionary
-	defvar "_X",2,,TX
-	defvar "_Y",2,,TY
-	defvar "_Z",2,,TZ
+	defvar "HERE",4,,HERE
+	defvar "LATEST",6,,LATEST,name_SYSCALL0 // SYSCALL0 must be last in built-in dictionary
 	defvar "S0",2,,SZ
 	defvar "BASE",4,,BASE,10
 
@@ -1154,7 +1134,7 @@ var_\name :
 	.endm
 
 	defconst "VERSION",7,,VERSION,JONES_VERSION
-	defconst "R0",2,,RZ,return_stack
+	defconst "R0",2,,RZ,return_stack_top
 	defconst "DOCOL",5,,__DOCOL,DOCOL
 	defconst "F_IMMED",7,,__F_IMMED,F_IMMED
 	defconst "F_HIDDEN",8,,__F_HIDDEN,F_HIDDEN
@@ -1166,6 +1146,7 @@ var_\name :
 	defconst "SYS_READ",8,,SYS_READ,__NR_read
 	defconst "SYS_WRITE",9,,SYS_WRITE,__NR_write
 	defconst "SYS_CREAT",9,,SYS_CREAT,__NR_creat
+	defconst "SYS_BRK",7,,SYS_BRK,__NR_brk
 
 	defconst "O_RDONLY",8,,__O_RDONLY,0
 	defconst "O_WRONLY",8,,__O_WRONLY,1
@@ -1202,7 +1183,7 @@ var_\name :
 	NEXT
 
 	defcode "RDROP",5,,RDROP
-	lea 4(%ebp),%ebp	// pop return stack and throw away
+	addl $4,%ebp		// pop return stack and throw away
 	NEXT
 
 /*
@@ -1240,11 +1221,24 @@ var_\name :
 	and compiling code, we might be reading words to execute, we might be asking for the user
 	to type their name -- ultimately it all comes in through KEY.
 
-	The implementation of KEY uses an input buffer of a certain size (defined at the end of the
-	program).  It calls the Linux read(2) system call to fill this buffer and tracks its position
+	The implementation of KEY uses an input buffer of a certain size (defined at the start of this
+	file).  It calls the Linux read(2) system call to fill this buffer and tracks its position
 	in the buffer using a couple of variables, and if it runs out of input buffer then it refills
 	it automatically.  The other thing that KEY does is if it detects that stdin has closed, it
 	exits the program, which is why when you hit ^D the FORTH system cleanly exits.
+
+     buffer			      bufftop
+	|				 |
+	V				 V
+	+-------------------------------+--------------------------------------+
+	| INPUT READ FROM STDIN ....... | unused part of the buffer            |
+	+-------------------------------+--------------------------------------+
+	                  ^
+			  |
+		       currkey (next character to read)
+
+	<---------------------- BUFFER_SIZE (4096 bytes) ---------------------->
+	
 */
 
 	defcode "KEY",3,,KEY
@@ -1254,18 +1248,18 @@ var_\name :
 _KEY:
 	mov (currkey),%ebx
 	cmp (bufftop),%ebx
-	jge 1f
+	jge 1f			// exhausted the input buffer?
 	xor %eax,%eax
 	mov (%ebx),%al
 	inc %ebx
 	mov %ebx,(currkey)
 	ret
 
-1:	// out of input; use read(2) to fetch more input from stdin
+1:	// Out of input; use read(2) to fetch more input from stdin.
 	xor %ebx,%ebx		// 1st param: stdin
 	mov $buffer,%ecx	// 2nd param: buffer
 	mov %ecx,currkey
-	mov $buffend-buffer,%edx // 3rd param: max length
+	mov $BUFFER_SIZE,%edx	// 3rd param: max length
 	mov $__NR_read,%eax	// syscall: read
 	int $0x80
 	test %eax,%eax		// If %eax <= 0, then exit.
@@ -1274,10 +1268,17 @@ _KEY:
 	mov %ecx,bufftop
 	jmp _KEY
 
-2:	// error or out of input: exit
+2:	// Error or end of input: exit the program.
 	xor %ebx,%ebx
 	mov $__NR_exit,%eax	// syscall: exit
 	int $0x80
+
+	.data
+	.align 4
+currkey:
+	.int buffer		// Current place in input buffer (next character to read).
+bufftop:
+	.int buffer		// Last valid data in input buffer + 1.
 
 /*
 	By contrast, output is much simpler.  The FORTH word EMIT writes out a single byte to stdout.
@@ -1293,8 +1294,8 @@ _EMIT:
 	mov $1,%ebx		// 1st param: stdout
 
 	// write needs the address of the byte to write
-	mov %al,(2f)
-	mov $2f,%ecx		// 2nd param: address
+	mov %al,emit_scratch
+	mov $emit_scratch,%ecx	// 2nd param: address
 
 	mov $1,%edx		// 3rd param: nbytes = 1
 
@@ -1302,8 +1303,9 @@ _EMIT:
 	int $0x80
 	ret
 
-	.bss
-2:	.space 1		// scratch used by EMIT
+	.data			// NB: easier to fit in the .data section
+emit_scratch:
+	.space 1		// scratch used by EMIT
 
 /*
 	Back to input, WORD is a FORTH word which reads the next full word of input.
@@ -1317,9 +1319,11 @@ _EMIT:
 	a static C string).  Also notice that WORD's internal buffer is just 32 bytes long and
 	there is NO checking for overflow.  31 bytes happens to be the maximum length of a
 	FORTH word that we support, and that is what WORD is used for: to read FORTH words when
-	we are compiling and executing code.  The returned strings are not NUL-terminated, so
-	in some crazy-world you could define FORTH words containing ASCII NULs, although why
-	you'd want to is a bit beyond me.
+	we are compiling and executing code.  The returned strings are not NUL-terminated.
+
+	Start address+length is the normal way to represent strings in FORTH (not ending in an
+	ASCII NUL character as in C), and so FORTH strings can contain any character including NULs
+	and can be any length.
 
 	WORD is not suitable for just reading strings (eg. user input) because of all the above
 	peculiarities and limitations.
@@ -1348,7 +1352,7 @@ _WORD:
 	jbe 1b			// if so, keep looking
 
 	/* Search for the end of the word, storing chars as we go. */
-	mov $5f,%edi		// pointer to return buffer
+	mov $word_buffer,%edi	// pointer to return buffer
 2:
 	stosb			// add character to return buffer
 	call _KEY		// get next key, returned in %al
@@ -1356,9 +1360,9 @@ _WORD:
 	ja 2b			// if not, keep looping
 
 	/* Return the word (well, the static buffer) and length. */
-	sub $5f,%edi
+	sub $word_buffer,%edi
 	mov %edi,%ecx		// return length of the word
-	mov $5f,%edi		// return address of the word
+	mov $word_buffer,%edi	// return address of the word
 	ret
 
 	/* Code to skip \ comments to end of the current line. */
@@ -1368,40 +1372,88 @@ _WORD:
 	jne 3b
 	jmp 1b
 
-	.bss
+	.data			// NB: easier to fit in the .data section
 	// A static buffer where WORD returns.  Subsequent calls
 	// overwrite this buffer.  Maximum word length is 32 chars.
-5:	.space 32
+word_buffer:
+	.space 32
 
 /*
 	As well as reading in words we'll need to read in numbers and for that we are using a function
-	called SNUMBER.  This parses a numeric string such as one returned by WORD and pushes the
+	called NUMBER.  This parses a numeric string such as one returned by WORD and pushes the
 	number on the parameter stack.
 
-	This function does absolutely no error checking, and in particular the length of the string
-	must be >= 1 bytes, and should contain only digits 0-9.  If it doesn't you'll get random results.
+	The function uses the variable BASE as the base (radix) for conversion, so for example if
+	BASE is 2 then we expect a binary number.  Normally BASE is 10.
 
-	This function is only used when reading literal numbers in code, and shouldn't really be used
-	in user code at all.
+	If the word starts with a '-' character then the returned value is negative.
+
+	If the string can't be parsed as a number (or contains characters outside the current BASE)
+	then we need to return an error indication.  So NUMBER actually returns two items on the stack.
+	At the top of stack we return the number of unconverted characters (ie. if 0 then all characters
+	were converted, so there is no error).  Second from top of stack is the parsed number or a
+	partial value if there was an error.
 */
-	defcode "SNUMBER",7,,SNUMBER
-	pop %edi
-	pop %ecx
-	call _SNUMBER
-	push %eax
+	defcode "NUMBER",6,,NUMBER
+	pop %ecx		// length of string
+	pop %edi		// start address of string
+	call _NUMBER
+	push %eax		// parsed number
+	push %ecx		// number of unparsed characters (0 = no error)
 	NEXT
-_SNUMBER:
+
+_NUMBER:
 	xor %eax,%eax
 	xor %ebx,%ebx
-1:
-	imull $10,%eax		// %eax *= 10
-	movb (%edi),%bl
+
+	test %ecx,%ecx		// trying to parse a zero-length string is an error, but will return 0.
+	jz 5f
+
+	movl var_BASE,%edx	// get BASE (in %dl)
+
+	// Check if first character is '-'.
+	movb (%edi),%bl		// %bl = first character in string
 	inc %edi
-	subb $'0',%bl		// ASCII -> digit
+	push %eax		// push 0 on stack
+	cmpb $'-',%bl		// negative number?
+	jnz 2f
+	pop %eax
+	push %ebx		// push <> 0 on stack, indicating negative
+	dec %ecx
+	jnz 1f
+	pop %ebx		// error: string is only '-'.
+	movl $1,%ecx
+	ret
+
+	// Loop reading digits.
+1:	imull %edx,%eax		// %eax *= BASE
+	movb (%edi),%bl		// %bl = next character in string
+	inc %edi
+
+	// Convert 0-9, A-Z to a number 0-35.
+2:	subb $'0',%bl		// < '0'?
+	jb 4f
+	cmp $10,%bl		// <= '9'?
+	jb 3f
+	subb $17,%bl		// < 'A'? (17 is 'A'-'0')
+	jb 4f
+	addb $10,%bl
+
+3:	cmp %dl,%bl		// >= BASE?
+	jge 4f
+
+	// OK, so add it to %eax and loop.
 	add %ebx,%eax
 	dec %ecx
 	jnz 1b
-	ret
+
+	// Negate the result if first character was '-' (saved on the stack).
+4:	pop %ebx
+	test %ebx,%ebx
+	jz 5f
+	neg %eax
+
+5:	ret
 
 /*
 	DICTIONARY LOOK UPS ----------------------------------------------------------------------
@@ -1439,8 +1491,7 @@ _FIND:
 
 	// Now we start searching backwards through the dictionary for this word.
 	mov var_LATEST,%edx	// LATEST points to name header of the latest word in the dictionary
-1:
-	test %edx,%edx		// NULL pointer?  (end of the linked list)
+1:	test %edx,%edx		// NULL pointer?  (end of the linked list)
 	je 4f
 
 	// Compare the length expected and the length of the word.
@@ -1466,8 +1517,7 @@ _FIND:
 	mov %edx,%eax
 	ret
 
-2:
-	mov (%edx),%edx		// Move back through the link field to the previous word
+2:	mov (%edx),%edx		// Move back through the link field to the previous word
 	jmp 1b			// .. and loop.
 
 4:	// Not found.
@@ -1491,6 +1541,7 @@ _FIND:
 	+---------+---+---+---+---+---+---+---+---+------------+------------+------------+------------+
 	| LINK    | 6 | D | O | U | B | L | E | 0 | DOCOL      | DUP        | +          | EXIT       |
 	+---------+---+---+---+---+---+---+---+---+------------+------------+------------+------------+
+						   codeword
 
 	Notes:
 
@@ -1499,7 +1550,8 @@ _FIND:
 	In this FORTH you cannot easily turn a codeword pointer back into a dictionary entry pointer, but
 	that is not true in most FORTH implementations where they store a back pointer in the definition
 	(with an obvious memory/complexity cost).  The reason they do this is that it is useful to be
-	able to go backwards (codeword -> dictionary entry) in order to decompile FORTH definitions.
+	able to go backwards (codeword -> dictionary entry) in order to decompile FORTH definitions
+	quickly.
 
 	What does CFA stand for?  My best guess is "Code Field Address".
 */
@@ -1533,6 +1585,7 @@ _TCFA:
 	+---------+---+---+---+---+---+---+---+---+------------+------------+------------+------------+
 	| LINK    | 6 | D | O | U | B | L | E | 0 | DOCOL      | DUP        | +          | EXIT       |
 	+---------+---+---+---+---+---+---+---+---+------------+------------+------------+------------+
+						   codeword
 
 	(Note to those following the source of FIG-FORTH / ciforth: My >DFA definition is
 	different from theirs, because they have an extra indirection).
@@ -1570,7 +1623,7 @@ _TCFA:
 	FORTH solves this rather elegantly and as you might expect in a very low-level way which
 	allows you to change how the compiler works on your own code.
 
-	FORTH has an INTERPRETER function (a true interpreter this time, not DOCOL) which runs in a
+	FORTH has an INTERPRET function (a true interpreter this time, not DOCOL) which runs in a
 	loop, reading words (using WORD), looking them up (using FIND), turning them into codeword
 	pointers (using >CFA) and deciding what to do with them.
 
@@ -1581,7 +1634,7 @@ _TCFA:
 
 	The interesting stuff happens when STATE is non-zero -- compiling mode.  In this mode the
 	interpreter appends the codeword pointer to user memory (the HERE variable points to the next
-	free byte of user memory).
+	free byte of user memory -- see DATA SEGMENT section below).
 
 	So you may be able to see how we could define : (COLON).  The general plan is:
 
@@ -1642,6 +1695,7 @@ _TCFA:
 	IMMEDIATE then the interpreter runs it immediately _even if it's in compile mode_.
 
 	This is how the word ; (SEMICOLON) works -- as a word flagged in the dictionary as IMMEDIATE.
+
 	And all it does is append the codeword for EXIT on to the current definition and switch
 	back to immediate mode (set STATE back to 0).  Shortly we'll see the actual definition
 	of ; and we'll see that it's really a very simple definition, declared IMMEDIATE.
@@ -1654,7 +1708,6 @@ _TCFA:
                    len                         pad  codeword					       ^
 												       |
 												      HERE
-
 	STATE is set to 0.
 
 	And that's it, job done, our new definition is compiled, and we're back in immediate mode
@@ -1697,9 +1750,9 @@ _TCFA:
 
 	defcode "CREATE",6,,CREATE
 
-	// Get the word.
-	call _WORD		// Returns %ecx = length, %edi = pointer to word.
-	mov %edi,%ebx		// %ebx = address of the word
+	// Get the name length and address.
+	pop %ecx		// %ecx = length
+	pop %ebx		// %ebx = address of name
 
 	// Link pointer.
 	movl var_HERE,%edi	// %edi is the address of the header
@@ -1727,7 +1780,7 @@ _TCFA:
 	to use.
 
 	The first is , (COMMA) which is a standard FORTH word which appends a 32 bit integer to the user
-	data area pointed to by HERE, and adds 4 to HERE.  So the action of , (COMMA) is:
+	memory pointed to by HERE, and adds 4 to HERE.  So the action of , (COMMA) is:
 
 							previous value of HERE
 								 |
@@ -1789,6 +1842,7 @@ _COMMA:
 */
 
 	defword ":",1,,COLON
+	.int WORD		// Get the name of the new word
 	.int CREATE		// CREATE the dictionary entry / header
 	.int LIT, DOCOL, COMMA	// Append DOCOL  (the codeword).
 	.int LATEST, FETCH, HIDDEN // Make the word hidden (see below for definition).
@@ -1845,6 +1899,8 @@ _COMMA:
 
 		LATEST @ HIDDEN
 
+	'HIDE word' toggles the flag on a named 'word'.
+
 	Setting this flag stops the word from being found by FIND, and so can be used to make 'private'
 	words.  For example, to break up a large word into smaller parts you might do:
 
@@ -1852,9 +1908,9 @@ _COMMA:
 		: SUB2 ... subword ... ;
 		: SUB3 ... subword ... ;
 		: MAIN ... defined in terms of SUB1, SUB2, SUB3 ... ;
-		WORD SUB1 FIND HIDDEN		\ Hide SUB1
-		WORD SUB2 FIND HIDDEN		\ Hide SUB2
-		WORD SUB3 FIND HIDDEN		\ Hide SUB3
+		HIDE SUB1
+		HIDE SUB2
+		HIDE SUB3
 
 	After this, only MAIN is 'exported' or seen by the rest of the program.
 */
@@ -1864,6 +1920,12 @@ _COMMA:
 	addl $4,%edi		// Point to name/flags byte.
 	xorb $F_HIDDEN,(%edi)	// Toggle the HIDDEN bit.
 	NEXT
+
+	defword "HIDE",4,,HIDE
+	.int WORD		// Get the word (after HIDE).
+	.int FIND		// Look up in the dictionary.
+	.int HIDDEN		// Set F_HIDDEN flag.
+	.int EXIT		// Return.
 
 /*
 	' (TICK) is a standard FORTH word which returns the codeword pointer of the next word.
@@ -1978,24 +2040,28 @@ _COMMA:
 	NEXT
 
 /*
-	COLD START AND INTERPRETER ----------------------------------------------------------------------
+	QUIT AND INTERPRET ----------------------------------------------------------------------
 
-	COLD is the first FORTH function called, almost immediately after the FORTH system "boots".
+	QUIT is the first FORTH function called, almost immediately after the FORTH system "boots".
+	As explained before, QUIT doesn't "quit" anything.  It does some initialisation (in particular
+	it clears the return stack) and it calls INTERPRET in a loop to interpret commands.  The
+	reason it is called QUIT is because you can call it from your own FORTH words in order to
+	"quit" your program and start again at the user prompt.
 
-	INTERPRETER is the FORTH interpreter ("toploop", "toplevel" or "REPL" might be a more accurate
+	INTERPRET is the FORTH interpreter ("toploop", "toplevel" or "REPL" might be a more accurate
 	description -- see: http://en.wikipedia.org/wiki/REPL).
 */
 
-	// COLD must not return (ie. must not call EXIT).
-	defword "COLD",4,,COLD
-	.int INTERPRETER	// call the interpreter loop (never returns)
+	// QUIT must not return (ie. must not call EXIT).
+	defword "QUIT",4,,QUIT
+	.int RZ,RSPSTORE	// R0 RSP!, clear the return stack
+	.int INTERPRET		// interpret the next word
+	.int BRANCH,-8		// and loop (indefinitely)
 
-/* This interpreter is pretty simple, but remember that in FORTH you can always override
- * it later with a more powerful one!
+/*
+	This interpreter is pretty simple, but remember that in FORTH you can always override
+	it later with a more powerful one!
  */
-	defword "INTERPRETER",11,,INTERPRETER
-	.int INTERPRET,RDROP,INTERPRETER
-
 	defcode "INTERPRET",9,,INTERPRET
 	call _WORD		// Returns %ecx = length, %edi = pointer to word.
 
@@ -2020,7 +2086,9 @@ _COMMA:
 
 1:	// Not in the dictionary (not a word) so assume it's a literal number.
 	incl interpret_is_lit
-	call _SNUMBER		// Returns the parsed number in %eax
+	call _NUMBER		// Returns the parsed number in %eax, %ecx > 0 if error
+	test %ecx,%ecx
+	jnz 6f
 	mov %eax,%ebx
 	mov $LIT,%eax		// The word is LIT
 
@@ -2044,14 +2112,44 @@ _COMMA:
 	jnz 5f
 
 	// Not a literal, execute it now.  This never returns, but the codeword will
-	// eventually call NEXT which will reenter the loop in INTERPRETER.
+	// eventually call NEXT which will reenter the loop in QUIT.
 	jmp *(%eax)
 
 5:	// Executing a literal, which means push it on the stack.
 	push %ebx
 	NEXT
 
-	.data
+6:	// Parse error (not a known word or a number in the current BASE).
+	// Print an error message followed by up to 40 characters of context.
+	mov $2,%ebx		// 1st param: stderr
+	mov $errmsg,%ecx	// 2nd param: error message
+	mov $errmsgend-errmsg,%edx // 3rd param: length of string
+	mov $__NR_write,%eax	// write syscall
+	int $0x80
+
+	mov (currkey),%ecx	// the error occurred just before currkey position
+	mov %ecx,%edx
+	sub $buffer,%edx	// %edx = currkey - buffer (length in buffer before currkey)
+	cmp $40,%edx		// if > 40, then print only 40 characters
+	jle 7f
+	mov $40,%edx
+7:	sub %edx,%ecx		// %ecx = start of area to print, %edx = length
+	mov $__NR_write,%eax	// write syscall
+	int $0x80
+
+	mov $errmsgnl,%ecx	// newline
+	mov $1,%edx
+	mov $__NR_write,%eax	// write syscall
+	int $0x80
+
+	NEXT
+
+	.section .rodata
+errmsg: .ascii "PARSE ERROR: "
+errmsgend:
+errmsgnl: .ascii "\n"
+
+	.data			// NB: easier to fit in the .data section
 	.align 4
 interpret_is_lit:
 	.int 0			// Flag used to record if reading a literal
@@ -2062,12 +2160,16 @@ interpret_is_lit:
 	CHAR puts the ASCII code of the first character of the following word on the stack.  For example
 	CHAR A puts 65 on the stack.
 
-	SYSCALL3 makes a standard Linux system call.  (See <asm/unistd.h> for a list of system call
-	numbers).  This is the form to use when the function takes up to three parameters.
+	EXECUTE is used to run execution tokens.  See the discussion of execution tokens in the
+	FORTH code for more details.
 
-	In this FORTH, SYSCALL3 must be the last word in the built-in (assembler) dictionary because we
+	SYSCALL0, SYSCALL1, SYSCALL2, SYSCALL3 make a standard Linux system call.  (See <asm/unistd.h>
+	for a list of system call numbers).  As their name suggests these forms take between 0 and 3
+	syscall parameters, plus the system call number.
+
+	In this FORTH, SYSCALL0 must be the last word in the built-in (assembler) dictionary because we
 	initialise the LATEST variable to point to it.  This means that if you want to extend the assembler
-	part, you must put new words before SYSCALL3, or else change how LATEST is initialised.
+	part, you must put new words before SYSCALL0, or else change how LATEST is initialised.
 */
 
 	defcode "CHAR",4,,CHAR
@@ -2076,6 +2178,11 @@ interpret_is_lit:
 	movb (%edi),%al		// Get the first character of the word.
 	push %eax		// Push it onto the stack.
 	NEXT
+
+	defcode "EXECUTE",7,,EXECUTE
+	pop %eax		// Get xt into %eax
+	jmp *(%eax)		// and jump to it.
+				// After xt runs its NEXT will continue executing the current word.
 
 	defcode "SYSCALL3",8,,SYSCALL3
 	pop %eax		// System call number (see <asm/unistd.h>)
@@ -2086,6 +2193,83 @@ interpret_is_lit:
 	push %eax		// Result (negative for -errno)
 	NEXT
 
+	defcode "SYSCALL2",8,,SYSCALL2
+	pop %eax		// System call number (see <asm/unistd.h>)
+	pop %ebx		// First parameter.
+	pop %ecx		// Second parameter
+	int $0x80
+	push %eax		// Result (negative for -errno)
+	NEXT
+
+	defcode "SYSCALL1",8,,SYSCALL1
+	pop %eax		// System call number (see <asm/unistd.h>)
+	pop %ebx		// First parameter.
+	int $0x80
+	push %eax		// Result (negative for -errno)
+	NEXT
+
+	defcode "SYSCALL0",8,,SYSCALL0
+	pop %eax		// System call number (see <asm/unistd.h>)
+	int $0x80
+	push %eax		// Result (negative for -errno)
+	NEXT
+
+/*
+	DATA SEGMENT ----------------------------------------------------------------------
+
+	Here we set up the Linux data segment, used for user definitions and variously known as just
+	the 'data segment', 'user memory' or 'user definitions area'.  It is an area of memory which
+	grows upwards and stores both newly-defined FORTH words and global variables of various
+	sorts.
+
+	It is completely analogous to the C heap, except there is no generalised 'malloc' and 'free'
+	(but as with everything in FORTH, writing such functions would just be a Simple Matter
+	Of Programming).  Instead in normal use the data segment just grows upwards as new FORTH
+	words are defined/appended to it.
+
+	There are various "features" of the GNU toolchain which make setting up the data segment
+	more complicated than it really needs to be.  One is the GNU linker which inserts a random
+	"build ID" segment.  Another is Address Space Randomization which means we can't tell
+	where the kernel will choose to place the data segment (or the stack for that matter).
+
+	Therefore writing this set_up_data_segment assembler routine is a little more complicated
+	than it really needs to be.  We ask the Linux kernel where it thinks the data segment starts
+	using the brk(2) system call, then ask it to reserve some initial space (also using brk(2)).
+
+	You don't need to worry about this code.
+*/
+	.text
+	.set INITIAL_DATA_SEGMENT_SIZE,65536
+set_up_data_segment:
+	xor %ebx,%ebx		// Call brk(0)
+	movl $__NR_brk,%eax
+	int $0x80
+	movl %eax,var_HERE	// Initialise HERE to point at beginning of data segment.
+	addl $INITIAL_DATA_SEGMENT_SIZE,%eax	// Reserve nn bytes of memory for initial data segment.
+	movl %eax,%ebx		// Call brk(HERE+INITIAL_DATA_SEGMENT_SIZE)
+	movl $__NR_brk,%eax
+	int $0x80
+	ret
+
+/*
+	We allocate static buffers for the return static and input buffer (used when
+	reading in files and text that the user types in).
+*/
+	.set RETURN_STACK_SIZE,8192
+	.set BUFFER_SIZE,4096
+
+	.bss
+/* FORTH return stack. */
+	.align 4096
+return_stack:
+	.space RETURN_STACK_SIZE
+return_stack_top:		// Initial top of return stack.
+
+/* This is used as a temporary input buffer when reading from files or the terminal. */
+	.align 4096
+buffer:
+	.space BUFFER_SIZE
+
 /*
 	START OF FORTH CODE ----------------------------------------------------------------------
 
@@ -2094,7 +2278,8 @@ interpret_is_lit:
 	languages would be considered rather fundamental.
 
 	I used to append this here in the assembly file, but I got sick of fighting against gas's
-	stupid (lack of) multiline string syntax.  So now that is in a separate file called jonesforth.f
+	crack-smoking (lack of) multiline string syntax.  So now that is in a separate file called
+	jonesforth.f
 
 	If you don't already have that file, download it from http://annexia.org/forth in order
 	to continue the tutorial.
