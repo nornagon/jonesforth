@@ -2,7 +2,7 @@
 \	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 \	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 \	This is PUBLIC DOMAIN (see public domain release statement below).
-\	$Id: jonesforth.f,v 1.13 2007-10-07 11:07:15 rich Exp $
+\	$Id: jonesforth.f,v 1.14 2007-10-10 13:01:05 rich Exp $
 \
 \	The first part of this tutorial is in jonesforth.S.  Get if from http://annexia.org/forth
 \
@@ -24,9 +24,9 @@
 \	Secondly make sure TABS are set to 8 characters.  The following should be a vertical
 \	line.  If not, sort out your tabs.
 \
-\	|
-\       |
-\	|
+\		|
+\	        |
+\	    	|
 \
 \	Thirdly I assume that your screen is at least 50 characters high.
 \
@@ -64,10 +64,6 @@
 \ very commonly so not really worth writing in assembler.  Here is how they are defined in FORTH.
 : 2DUP OVER OVER ;
 : 2DROP DROP DROP ;
-
-\ More standard FORTH words.
-: 2* 2 * ;
-: 2/ 2 / ;
 
 \ NEGATE leaves the negative of a number on the stack.
 : NEGATE 0 SWAP - ;
@@ -658,8 +654,9 @@
 	want a variable which is read often, and written infrequently.
 
 	20 VALUE VAL 	creates VAL with initial value 20
-	VAL		pushes the value directly on the stack
+	VAL		pushes the value (20) directly on the stack
 	30 TO VAL	updates VAL, setting it to 30
+	VAL		pushes the value (30) directly on the stack
 
 	Notice that 'VAL' on its own doesn't return the address of the value, but the value itself,
 	making values simpler and more obvious to use than variables (no indirection through '@').
@@ -833,10 +830,10 @@
 )
 : DUMP		( addr len -- )
 	BASE @ ROT		( save the current BASE at the bottom of the stack )
-	HEX			( and switch the hexadecimal mode )
+	HEX			( and switch to hexadecimal mode )
 
 	BEGIN
-		DUP 0>		( while len > 0 )
+		?DUP		( while len > 0 )
 	WHILE
 		OVER 8 U.R	( print the address )
 		SPACE
@@ -845,19 +842,19 @@
 		2DUP		( addr len addr len )
 		1- 15 AND 1+	( addr len addr linelen )
 		BEGIN
-			DUP 0>		( while linelen > 0 )
+			?DUP		( while linelen > 0 )
 		WHILE
 			SWAP		( addr len linelen addr )
 			DUP C@		( addr len linelen addr byte )
 			2 .R SPACE	( print the byte )
 			1+ SWAP 1-	( addr len linelen addr -- addr len addr+1 linelen-1 )
 		REPEAT
-		2DROP		( addr len )
+		DROP		( addr len )
 
 		( print the ASCII equivalents )
 		2DUP 1- 15 AND 1+ ( addr len addr linelen )
 		BEGIN
-			DUP 0>		( while linelen > 0)
+			?DUP		( while linelen > 0)
 		WHILE
 			SWAP		( addr len linelen addr )
 			DUP C@		( addr len linelen addr byte )
@@ -868,7 +865,7 @@
 			THEN
 			1+ SWAP 1-	( addr len linelen addr -- addr len addr+1 linelen-1 )
 		REPEAT
-		2DROP		( addr len )
+		DROP		( addr len )
 		CR
 
 		DUP 1- 15 AND 1+ ( addr len linelen )
@@ -880,7 +877,7 @@
 		SWAP		( addr-linelen len-linelen )
 	REPEAT
 
-	2DROP			( restore stack )
+	DROP			( restore stack )
 	BASE !			( restore saved BASE )
 ;
 
@@ -891,13 +888,13 @@
 	agreed syntax for this, so I've gone for the syntax mandated by the ISO standard
 	FORTH (ANS-FORTH).
 
-	( some value on the stack )
-	CASE
-	test1 OF ... ENDOF
-	test2 OF ... ENDOF
-	testn OF ... ENDOF
-	... ( default case )
-	ENDCASE
+		( some value on the stack )
+		CASE
+		test1 OF ... ENDOF
+		test2 OF ... ENDOF
+		testn OF ... ENDOF
+		... ( default case )
+		ENDCASE
 
 	The CASE statement tests the value on the stack by comparing it for equality with
 	test1, test2, ..., testn and executes the matching piece of code within OF ... ENDOF.
@@ -912,14 +909,14 @@
 	An example (assuming that 'q', etc. are words which push the ASCII value of the letter
 	on the stack):
 
-	0 VALUE QUIT
-	0 VALUE SLEEP
-	KEY CASE
-		'q' OF 1 TO QUIT ENDOF
-		's' OF 1 TO SLEEP ENDOF
-		( default case: )
-		." Sorry, I didn't understand key <" DUP EMIT ." >, try again." CR
-	ENDCASE
+		0 VALUE QUIT
+		0 VALUE SLEEP
+		KEY CASE
+			'q' OF 1 TO QUIT ENDOF
+			's' OF 1 TO SLEEP ENDOF
+			( default case: )
+			." Sorry, I didn't understand key <" DUP EMIT ." >, try again." CR
+		ENDCASE
 
 	(In some versions of FORTH, more advanced tests are supported, such as ranges, etc.
 	Other versions of FORTH need you to write OTHERWISE to indicate the default case.
@@ -1629,6 +1626,67 @@
 	." ERRNO="
 	. CR
 ;
+
+(
+	ASSEMBLER CODE ----------------------------------------------------------------------
+
+	This is just the outline of a simple assembler, allowing you to write FORTH primitives
+	in assembly language.
+
+	Assembly primitives begin ': NAME' in the normal way, but are ended with ;CODE.  ;CODE
+	updates the header so that the codeword isn't DOCOL, but points instead to the assembled
+	code (in the DFA part of the word).
+
+	We provide a convenience macro NEXT (you guessed the rest).
+
+	The rest consists of some immediate words which expand into machine code appended to the
+	definition of the word.  Only a very tiny part of the i386 assembly space is covered, just
+	enough to write a few assembler primitives below.
+)
+
+: ;CODE IMMEDIATE
+	ALIGN			( machine code is assembled in bytes so isn't necessarily aligned at the end )
+	LATEST @ DUP
+	HIDDEN			( unhide the word )
+	DUP >DFA SWAP >CFA !	( change the codeword to point to the data area )
+	[COMPILE] [		( go back to immediate mode )
+;
+
+HEX
+
+( Equivalent to the NEXT macro )
+: NEXT IMMEDIATE AD C, FF C, 20 C, ;
+
+( The i386 registers )
+: EAX IMMEDIATE 0 ;
+: ECX IMMEDIATE 1 ;
+: EDX IMMEDIATE 2 ;
+: EBX IMMEDIATE 3 ;
+: ESP IMMEDIATE 4 ;
+: EBP IMMEDIATE 5 ;
+: ESI IMMEDIATE 6 ;
+: EDI IMMEDIATE 7 ;
+
+( i386 stack instructions )
+: PUSH IMMEDIATE 50 + C, ;
+: POP IMMEDIATE 58 + C, ;
+
+( RDTSC instruction )
+: RDTSC IMMEDIATE 0F C, 31 C, ;
+
+DECIMAL
+
+(
+	RDTSC is an assembler primitive which reads the Pentium timestamp counter (a very fine-
+	grained counter which counts processor clock cycles).  Because the TSC is 64 bits wide
+	we have to push it onto the stack in two slots.
+)
+: RDTSC		( -- lsb msb )
+	RDTSC		( writes the result in %edx:%eax )
+	EAX PUSH	( push lsb )
+	EDX PUSH	( push msb )
+	NEXT
+;CODE
 
 (
 	NOTES ----------------------------------------------------------------------

@@ -1,11 +1,11 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 	This is PUBLIC DOMAIN (see public domain release statement below).
-	$Id: jonesforth.S,v 1.42 2007-10-07 11:07:15 rich Exp $
+	$Id: jonesforth.S,v 1.43 2007-10-10 13:01:05 rich Exp $
 
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -Wl,--build-id=none -o jonesforth jonesforth.S
 */
-	.set JONES_VERSION,42
+	.set JONES_VERSION,43
 /*
 	INTRODUCTION ----------------------------------------------------------------------
 
@@ -102,9 +102,9 @@
 	Secondly make sure TABS are set to 8 characters.  The following should be a vertical
 	line.  If not, sort out your tabs.
 
-	|
-        |
-	|
+		|
+	        |
+	    	|
 
 	Thirdly I assume that your screen is at least 50 characters high.
 
@@ -151,7 +151,8 @@
 	    mov 2,%eax		reads the 32 bit word from address 2 into %eax (ie. most likely a mistake)
 
 	(4) gas has a funky syntax for local labels, where '1f' (etc.) means label '1:' "forwards"
-	    and '1b' (etc.) means label '1:' "backwards".
+	    and '1b' (etc.) means label '1:' "backwards".  Notice that these labels might be mistaken
+	    for hex numbers (eg. you might confuse 1b with $0x1b).
 
 	(5) 'ja' is "jump if above", 'jb' for "jump if below", 'je' "jump if equal" etc.
 
@@ -269,8 +270,8 @@
 	caches than those early computers had in total, but the execution model still has some
 	useful properties].
 
-	Of course this code won't run directly any more.  Instead we need to write an interpreter
-	which takes each pair of bytes and calls it.
+	Of course this code won't run directly on the CPU any more.  Instead we need to write an
+	interpreter which takes each set of bytes and calls it.
 
 	On an i386 machine it turns out that we can write this interpreter rather easily, in just
 	two assembly instructions which turn into just 3 bytes of machine code.  Let's store the
@@ -455,10 +456,10 @@
 	Because we will need to restore the old %esi at the end of DOUBLE (this is, after all, like
 	a function call), we will need a stack to store these "return addresses" (old values of %esi).
 
-	As you will have read, when reading the background documentation, FORTH has two stacks,
-	an ordinary stack for parameters, and a return stack which is a bit more mysterious.  But
-	our return stack is just the stack I talked about in the previous paragraph, used to save
-	%esi when calling from a FORTH word into another FORTH word.
+	As you will have seen in the background documentation, FORTH has two stacks, an ordinary
+	stack for parameters, and a return stack which is a bit more mysterious.  But our return
+	stack is just the stack I talked about in the previous paragraph, used to save %esi when
+	calling from a FORTH word into another FORTH word.
 
 	In this FORTH, we are using the normal stack pointer (%esp) for the parameter stack.
 	We will use the i386's "other" stack pointer (%ebp, usually called the "frame pointer")
@@ -598,6 +599,7 @@ cold_start:			// High-level code without a codeword.
 	unsure of them).
 
 	The long way would be:
+
 	.int <link to previous word>
 	.byte 6			// len
 	.ascii "DOUBLE"		// string
@@ -661,6 +663,7 @@ name_\label :
 	  LINK in next word
 
 	Again, for brevity in writing the header I'm going to write an assembler macro called defcode.
+	As with defword above, don't worry about the complicated details of the macro.
 */
 
 	.macro defcode name, namelen, flags=0, label
@@ -783,7 +786,7 @@ code_\label :			// assembler code follows
 	NEXT
 
 /*
-	Lots of comparison operations.
+	Lots of comparison operations like =, <, >, etc..
 
 	ANS FORTH says that the comparison words should return all (binary) 1's for
 	TRUE and all 0's for FALSE.  However this is a bit of a strange convention
@@ -1221,7 +1224,7 @@ var_\name :
 	and compiling code, we might be reading words to execute, we might be asking for the user
 	to type their name -- ultimately it all comes in through KEY.
 
-	The implementation of KEY uses an input buffer of a certain size (defined at the start of this
+	The implementation of KEY uses an input buffer of a certain size (defined at the end of this
 	file).  It calls the Linux read(2) system call to fill this buffer and tracks its position
 	in the buffer using a couple of variables, and if it runs out of input buffer then it refills
 	it automatically.  The other thing that KEY does is if it detects that stdin has closed, it
@@ -1238,7 +1241,6 @@ var_\name :
 		       currkey (next character to read)
 
 	<---------------------- BUFFER_SIZE (4096 bytes) ---------------------->
-	
 */
 
 	defcode "KEY",3,,KEY
@@ -1250,9 +1252,9 @@ _KEY:
 	cmp (bufftop),%ebx
 	jge 1f			// exhausted the input buffer?
 	xor %eax,%eax
-	mov (%ebx),%al
+	mov (%ebx),%al		// get next key from input buffer
 	inc %ebx
-	mov %ebx,(currkey)
+	mov %ebx,(currkey)	// increment currkey
 	ret
 
 1:	// Out of input; use read(2) to fetch more input from stdin.

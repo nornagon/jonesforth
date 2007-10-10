@@ -1,4 +1,4 @@
-# $Id: Makefile,v 1.6 2007-10-07 11:07:15 rich Exp $
+# $Id: Makefile,v 1.7 2007-10-10 13:01:05 rich Exp $
 
 SHELL	:= /bin/bash
 
@@ -13,6 +13,8 @@ run:
 clean:
 	rm -f jonesforth *~ core .test_*
 
+# Tests.
+
 TESTS	:= $(patsubst %.f,%.test,$(wildcard test_*.f))
 
 test check: $(TESTS)
@@ -26,6 +28,11 @@ test_%.test: test_%.f jonesforth
 	@diff -u .$@ $<.out
 	@rm -f .$@
 	@echo "ok"
+
+# Performance.
+
+perf_dupdrop: perf_dupdrop.c
+	gcc -O3 -Wall -Werror -o $@ $<
 
 .SUFFIXES: .f .test
 .PHONY: test check
