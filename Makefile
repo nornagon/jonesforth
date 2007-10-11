@@ -1,4 +1,4 @@
-# $Id: Makefile,v 1.7 2007-10-10 13:01:05 rich Exp $
+# $Id: Makefile,v 1.8 2007-10-11 07:45:35 rich Exp $
 
 SHELL	:= /bin/bash
 
@@ -11,7 +11,7 @@ run:
 	cat jonesforth.f $(PROG) - | ./jonesforth
 
 clean:
-	rm -f jonesforth *~ core .test_*
+	rm -f jonesforth perf_dupdrop *~ core .test_*
 
 # Tests.
 
@@ -34,8 +34,11 @@ test_%.test: test_%.f jonesforth
 perf_dupdrop: perf_dupdrop.c
 	gcc -O3 -Wall -Werror -o $@ $<
 
+run_perf_dupdrop: jonesforth
+	cat <(echo ': TEST-MODE ;') jonesforth.f perf_dupdrop.f | ./jonesforth
+
 .SUFFIXES: .f .test
-.PHONY: test check
+.PHONY: test check run run_perf_dupdrop
 
 remote:
 	scp jonesforth.S jonesforth.f rjones@oirase:Desktop/
