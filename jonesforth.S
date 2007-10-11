@@ -1,11 +1,11 @@
 /*	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 	This is PUBLIC DOMAIN (see public domain release statement below).
-	$Id: jonesforth.S,v 1.43 2007-10-10 13:01:05 rich Exp $
+	$Id: jonesforth.S,v 1.44 2007-10-11 07:38:31 rich Exp $
 
 	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -Wl,--build-id=none -o jonesforth jonesforth.S
 */
-	.set JONES_VERSION,43
+	.set JONES_VERSION,44
 /*
 	INTRODUCTION ----------------------------------------------------------------------
 
@@ -727,6 +727,29 @@ code_\label :			// assembler code follows
 	pop %ecx
 	push %ebx
 	push %eax
+	push %ecx
+	NEXT
+
+	defcode "2DROP",5,,TWODROP // drop top two elements of stack
+	pop %eax
+	pop %eax
+	NEXT
+
+	defcode "2DUP",4,,TWODUP // duplicate top two elements of stack
+	mov (%esp),%eax
+	mov 4(%esp),%ebx
+	push %ebx
+	push %eax
+	NEXT
+
+	defcode "2SWAP",5,,TWOSWAP // swap top two pairs of elements of stack
+	pop %eax
+	pop %ebx
+	pop %ecx
+	pop %edx
+	push %ebx
+	push %eax
+	push %edx
 	push %ecx
 	NEXT
 
