@@ -2,7 +2,7 @@
 \	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 \	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 \	This is PUBLIC DOMAIN (see public domain release statement below).
-\	$Id: jonesforth.f,v 1.14 2007-10-10 13:01:05 rich Exp $
+\	$Id: jonesforth.f,v 1.15 2007-10-11 07:39:51 rich Exp $
 \
 \	The first part of this tutorial is in jonesforth.S.  Get if from http://annexia.org/forth
 \
@@ -59,11 +59,6 @@
 
 \ SPACE prints a space
 : SPACE BL EMIT ;
-
-\ The 2... versions of the standard operators work on pairs of stack entries.  They're not used
-\ very commonly so not really worth writing in assembler.  Here is how they are defined in FORTH.
-: 2DUP OVER OVER ;
-: 2DROP DROP DROP ;
 
 \ NEGATE leaves the negative of a number on the stack.
 : NEGATE 0 SWAP - ;
@@ -1637,25 +1632,27 @@
 	updates the header so that the codeword isn't DOCOL, but points instead to the assembled
 	code (in the DFA part of the word).
 
-	We provide a convenience macro NEXT (you guessed the rest).
+	We provide a convenience macro NEXT (you guessed what it does).  However you don't need to
+	use it because ;CODE will put a NEXT at the end of your word.
 
 	The rest consists of some immediate words which expand into machine code appended to the
 	definition of the word.  Only a very tiny part of the i386 assembly space is covered, just
 	enough to write a few assembler primitives below.
 )
 
+HEX
+
+( Equivalent to the NEXT macro )
+: NEXT IMMEDIATE AD C, FF C, 20 C, ;
+
 : ;CODE IMMEDIATE
+	[COMPILE] NEXT		( end the word with NEXT macro )
 	ALIGN			( machine code is assembled in bytes so isn't necessarily aligned at the end )
 	LATEST @ DUP
 	HIDDEN			( unhide the word )
 	DUP >DFA SWAP >CFA !	( change the codeword to point to the data area )
 	[COMPILE] [		( go back to immediate mode )
 ;
-
-HEX
-
-( Equivalent to the NEXT macro )
-: NEXT IMMEDIATE AD C, FF C, 20 C, ;
 
 ( The i386 registers )
 : EAX IMMEDIATE 0 ;
@@ -1685,8 +1682,80 @@ DECIMAL
 	RDTSC		( writes the result in %edx:%eax )
 	EAX PUSH	( push lsb )
 	EDX PUSH	( push msb )
-	NEXT
 ;CODE
+
+(
+	INLINE can be used to inline an assembler primitive into the current (assembler)
+	word.
+
+	For example:
+
+		: 2DROP INLINE DROP INLINE DROP ;CODE
+
+	will build an efficient assembler word 2DROP which contains the inline assembly code
+	for DROP followed by DROP (eg. two 'pop %eax' instructions in this case).
+
+	Another example.  Consider this ordinary FORTH definition:
+
+		: C@++ ( addr -- addr+1 byte ) DUP 1+ SWAP C@ ;
+
+	(it is equivalent to the C operation '*p++' where p is a pointer to char).  If we
+	notice that all of the words used to define C@++ are in fact assembler primitives,
+	then we can write a faster (but equivalent) definition like this:
+
+		: C@++ INLINE DUP INLINE 1+ INLINE SWAP INLINE C@ ;CODE
+
+	There are several conditions that must be met for INLINE to be used successfully:
+
+	(1) You must be currently defining an assembler word (ie. : ... ;CODE).
+
+	(2) The word that you are inlining must be known to be an assembler word.  If you try
+	to inline a FORTH word, you'll get an error message.
+
+	(3) The assembler primitive must be position-independent code and must end with a
+	single NEXT macro.
+
+	Exercises for the reader: (a) Generalise INLINE so that it can inline FORTH words when
+	building FORTH words. (b) Further generalise INLINE so that it does something sensible
+	when you try to inline FORTH into assembler and vice versa.
+
+	The implementation of INLINE is pretty simple.  We find the word in the dictionary,
+	check it's an assembler word, then copy it into the current definition, byte by byte,
+	until we reach the NEXT macro (which is not copied).
+)
+HEX
+: =NEXT		( addr -- next? )
+	   DUP C@ AD <> IF DROP FALSE EXIT THEN
+	1+ DUP C@ FF <> IF DROP FALSE EXIT THEN
+	1+     C@ 20 <> IF      FALSE EXIT THEN
+	TRUE
+;
+DECIMAL
+
+( (INLINE) is the lowlevel inline function. )
+: (INLINE)	( cfa -- )
+	@			( codeword points to the code, remember )
+	BEGIN			( copy bytes until we hit NEXT macro )
+		DUP =NEXT NOT
+	WHILE
+		DUP C@ C,
+		1+
+	REPEAT
+	DROP
+;
+
+: INLINE IMMEDIATE
+	WORD FIND		( find the word in the dictionary )
+	>CFA			( codeword )
+
+	DUP @ DOCOL = IF	( check codeword <> DOCOL (ie. not a FORTH word) )
+		." Cannot INLINE FORTH words" CR ABORT
+	THEN
+
+	(INLINE)
+;
+
+HIDE =NEXT
 
 (
 	NOTES ----------------------------------------------------------------------
