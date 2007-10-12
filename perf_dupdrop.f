@@ -1,7 +1,7 @@
 ( -*- text -*-
   FORTH repeated DUP DROP * 1000 using ordinary indirect threaded code
   and the assembler primitives.
-  $Id: perf_dupdrop.f,v 1.2 2007-10-11 07:45:35 rich Exp $ )
+  $Id: perf_dupdrop.f,v 1.3 2007-10-12 01:46:26 rich Exp $ )
 
 1024 32 * MORECORE
 
@@ -18,9 +18,16 @@
 	THEN
 ;
 
+: 4DROP DROP DROP DROP DROP ;
+
 : PERFORM-TEST	( xt -- )
 	( Get everything in the cache. )
-	DUP EXECUTE DUP EXECUTE DUP EXECUTE DUP EXECUTE DUP EXECUTE DUP EXECUTE
+	DUP EXECUTE 4DROP
+	DUP EXECUTE 4DROP
+	DUP EXECUTE 4DROP
+	DUP EXECUTE 4DROP
+	DUP EXECUTE 4DROP
+	DUP EXECUTE 4DROP
 	0 0 0 0 PRINT-TIME
 	( Run the test 10 times. )
 	DUP EXECUTE PRINT-TIME
