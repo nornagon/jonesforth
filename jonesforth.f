@@ -2,7 +2,7 @@
 \	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 \	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 \	This is PUBLIC DOMAIN (see public domain release statement below).
-\	$Id: jonesforth.f,v 1.15 2007-10-11 07:39:51 rich Exp $
+\	$Id: jonesforth.f,v 1.16 2007-10-12 01:46:12 rich Exp $
 \
 \	The first part of this tutorial is in jonesforth.S.  Get if from http://annexia.org/forth
 \
@@ -822,6 +822,10 @@
 
 	Notice that the parameters to DUMP (address, length) are compatible with string words
 	such as WORD and S".
+
+	You can dump out the raw code for the last word you defined by doing something like:
+
+		LATEST @ 128 DUMP
 )
 : DUMP		( addr len -- )
 	BASE @ ROT		( save the current BASE at the bottom of the stack )
