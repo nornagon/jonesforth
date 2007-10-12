@@ -2,7 +2,7 @@
 \	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 \	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 \	This is PUBLIC DOMAIN (see public domain release statement below).
-\	$Id: jonesforth.f,v 1.16 2007-10-12 01:46:12 rich Exp $
+\	$Id: jonesforth.f,v 1.17 2007-10-12 20:07:44 rich Exp $
 \
 \	The first part of this tutorial is in jonesforth.S.  Get if from http://annexia.org/forth
 \
@@ -1709,6 +1709,10 @@ DECIMAL
 
 		: C@++ INLINE DUP INLINE 1+ INLINE SWAP INLINE C@ ;CODE
 
+	One interesting point to note is that this "concatenative" style of programming
+	allows you to write assembler words portably.  The above definition would work
+	for any CPU architecture.
+
 	There are several conditions that must be met for INLINE to be used successfully:
 
 	(1) You must be currently defining an assembler word (ie. : ... ;CODE).
@@ -1738,7 +1742,7 @@ DECIMAL
 
 ( (INLINE) is the lowlevel inline function. )
 : (INLINE)	( cfa -- )
-	@			( codeword points to the code, remember )
+	@			( remember codeword points to the code )
 	BEGIN			( copy bytes until we hit NEXT macro )
 		DUP =NEXT NOT
 	WHILE
