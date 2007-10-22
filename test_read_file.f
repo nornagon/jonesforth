@@ -1,14 +1,14 @@
 ( -*- text -*-
 	Test READ-FILE.
-	$Id: test_read_file.f,v 1.1 2007-10-07 11:07:15 rich Exp $
+	$Id: test_read_file.f,v 1.2 2007-10-22 18:53:13 rich Exp $
 )
 
 0 VALUE FD
 100 CELLS ALLOT CONSTANT BUFFER
 
 : TEST
-	S" /etc/fstab" R/O OPEN-FILE
-	?DUP IF S" /etc/fstab" PERROR QUIT THEN
+	S" test_read_file.f.out" R/O OPEN-FILE
+	?DUP IF S" test_read_file.f.out" PERROR QUIT THEN
 
 	TO FD
 

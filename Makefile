@@ -1,11 +1,14 @@
-# $Id: Makefile,v 1.8 2007-10-11 07:45:35 rich Exp $
+# $Id: Makefile,v 1.9 2007-10-22 18:53:12 rich Exp $
+
+#BUILD_ID_NONE := -Wl,--build-id=none 
+BUILD_ID_NONE := 
 
 SHELL	:= /bin/bash
 
 all:	jonesforth
 
 jonesforth: jonesforth.S
-	gcc -m32 -nostdlib -static -Wl,-Ttext,0 -Wl,--build-id=none -o $@ $<
+	gcc -m32 -nostdlib -static -Wl,-Ttext,0 $(BUILD_ID_NONE) -o $@ $<
 
 run:
 	cat jonesforth.f $(PROG) - | ./jonesforth
