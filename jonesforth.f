@@ -2,7 +2,7 @@
 \	A sometimes minimal FORTH compiler and tutorial for Linux / i386 systems. -*- asm -*-
 \	By Richard W.M. Jones <rich@annexia.org> http://annexia.org/forth
 \	This is PUBLIC DOMAIN (see public domain release statement below).
-\	$Id: jonesforth.f,v 1.17 2007-10-12 20:07:44 rich Exp $
+\	$Id: jonesforth.f,v 1.18 2009-09-11 08:32:33 rich Exp $
 \
 \	The first part of this tutorial is in jonesforth.S.  Get if from http://annexia.org/forth
 \
@@ -249,7 +249,7 @@
 
 ( Some more complicated stack examples, showing the stack notation. )
 : NIP ( x y -- y ) SWAP DROP ;
-: TUCK ( x y -- y x y ) DUP ROT ;
+: TUCK ( x y -- y x y ) SWAP OVER ;
 : PICK ( x_u ... x_1 x_0 u -- x_u ... x_1 x_0 x_u )
 	1+		( add one because of 'u' on the stack )
 	4 *		( multiply by the word size )
@@ -349,7 +349,7 @@
 	SWAP		( width u )
 	DUP		( width u u )
 	UWIDTH		( width u uwidth )
-	-ROT		( u uwidth width )
+	ROT		( u uwidth width )
 	SWAP -		( u width-uwidth )
 	( At this point if the requested width is narrower, we'll have a negative number on the stack.
 	  Otherwise the number on the stack is the number of spaces to print.  But SPACES won't print
@@ -368,18 +368,18 @@
 	DUP 0< IF
 		NEGATE		( width u )
 		1		( save a flag to remember that it was negative | width n 1 )
-		ROT		( 1 width u )
-		SWAP		( 1 u width )
+		SWAP		( width 1 u )
+		ROT		( 1 u width )
 		1-		( 1 u width-1 )
 	ELSE
 		0		( width u 0 )
-		ROT		( 0 width u )
-		SWAP		( 0 u width )
+		SWAP		( width 0 u )
+		ROT		( 0 u width )
 	THEN
 	SWAP		( flag width u )
 	DUP		( flag width u u )
 	UWIDTH		( flag width u uwidth )
-	-ROT		( flag u uwidth width )
+	ROT		( flag u uwidth width )
 	SWAP -		( flag u width-uwidth )
 
 	SPACES		( flag u )
@@ -402,8 +402,9 @@
 : ? ( addr -- ) @ . ;
 
 ( c a b WITHIN returns true if a <= c and c < b )
+(  or define without ifs: OVER - >R - R>  U<  )
 : WITHIN
-	ROT		( b c a )
+	-ROT		( b c a )
 	OVER		( b c a c )
 	<= IF
 		> IF		( b c -- )
@@ -828,7 +829,7 @@
 		LATEST @ 128 DUMP
 )
 : DUMP		( addr len -- )
-	BASE @ ROT		( save the current BASE at the bottom of the stack )
+	BASE @ -ROT		( save the current BASE at the bottom of the stack )
 	HEX			( and switch to hexadecimal mode )
 
 	BEGIN
@@ -868,12 +869,9 @@
 		CR
 
 		DUP 1- 15 AND 1+ ( addr len linelen )
-		DUP		( addr len linelen linelen )
-		ROT		( addr linelen len linelen )
+		TUCK		( addr linelen len linelen )
 		-		( addr linelen len-linelen )
-		ROT		( len-linelen addr linelen )
-		+		( len-linelen addr+linelen )
-		SWAP		( addr-linelen len-linelen )
+		>R + R>		( addr+linelen len-linelen )
 	REPEAT
 
 	DROP			( restore stack )
@@ -1572,7 +1570,7 @@
 : R/W ( -- fam ) O_RDWR ;
 
 : OPEN-FILE	( addr u fam -- fd 0 (if successful) | c-addr u fam -- fd errno (if there was an error) )
-	ROT		( fam addr u )
+	-ROT		( fam addr u )
 	CSTRING		( fam cstring )
 	SYS_OPEN SYSCALL2 ( open (filename, flags) )
 	DUP		( fd fd )
@@ -1586,9 +1584,9 @@
 : CREATE-FILE	( addr u fam -- fd 0 (if successful) | c-addr u fam -- fd errno (if there was an error) )
 	O_CREAT OR
 	O_TRUNC OR
-	ROT		( fam addr u )
+	-ROT		( fam addr u )
 	CSTRING		( fam cstring )
-	420 ROT		( 0644 fam cstring )
+	420 -ROT	( 0644 fam cstring )
 	SYS_OPEN SYSCALL3 ( open (filename, flags|O_TRUNC|O_CREAT, 0644) )
 	DUP		( fd fd )
 	DUP 0< IF	( errno? )
@@ -1604,7 +1602,7 @@
 ;
 
 : READ-FILE	( addr u fd -- u2 0 (if successful) | addr u fd -- 0 0 (if EOF) | addr u fd -- u2 errno (if error) )
-	ROT SWAP -ROT	( u addr fd )
+	>R SWAP R>	( u addr fd )
 	SYS_READ SYSCALL3
 
 	DUP		( u2 u2 )
