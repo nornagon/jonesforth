@@ -1,0 +1,8 @@
+FROM gcc:11
+
+RUN apt-get update \
+    && apt-get install -y gcc-multilib \
+    && apt-get clean -y \
+    && mkdir /app
+
+WORKDIR /app
