@@ -645,7 +645,7 @@ name_\label :
 	.endm
 
 /*
-	Similarly I want a way to write words written in assembly language.  There will quite a few
+	Similarly I want a way to write words written in assembly language.  There will be quite a few
 	of these to start with because, well, everything has to start in assembly before there's
 	enough "infrastructure" to be able to start writing FORTH words, but also I want to define
 	some common FORTH words in assembly language for speed, even though I could write them in FORTH.
@@ -1022,7 +1022,7 @@ code_\label :			// assembler code follows
 /*
 	MEMORY ----------------------------------------------------------------------
 
-	As important point about FORTH is that it gives you direct access to the lowest levels
+	An important point about FORTH is that it gives you direct access to the lowest levels
 	of the machine.  Manipulating memory directly is done frequently in FORTH, and these are
 	the primitive words for doing it.
 */
