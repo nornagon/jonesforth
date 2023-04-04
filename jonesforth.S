@@ -712,7 +712,7 @@ code_\label :			// assembler code follows
 	push %eax		// and push it on top
 	NEXT
 
-	defcode "ROT",3,,ROT
+	defcode "ROT",3,,ROT // back to front
 	pop %eax
 	pop %ebx
 	pop %ecx
@@ -937,6 +937,39 @@ code_\label :			// assembler code follows
 	defcode "INVERT",6,,INVERT // this is the FORTH bitwise "NOT" function (cf. NEGATE and NOT)
 	notl (%esp)
 	NEXT
+
+/* START OF AJAL CODE */
+	defcode "2*",2,,SFTL1 // x -- x<<1
+	pop %eax
+	shld $1,%eax,%ebx
+	pushl %ebx
+	NEXT
+	
+	defcode "2/",2,,SFTR1 // x -- x>>1
+	pop %eax
+	shrd $1,%eax,%ebx
+	pushl %ebx
+	NEXT
+
+	defcode "<<",2,,SFTL // x cnt -- x<<cnt
+	pop %ecx
+	pop %eax
+	shl %ecx,%eax
+	pushl %eax
+	NEXT
+	defcode ">>",2,,SFTR // x cnt -- x<<cnt
+	pop %ecx
+	pop %eax
+	shr %ecx,%eax
+	pushl %eax
+	NEXT
+	defcode "S>>",2,,SSFTR // x cnt -- x<<cnt
+	pop %ecx
+	pop %eax
+	sar %ecx,%eax // SIGNED SHIFT
+	pushl %eax
+	NEXT
+/* END OF AJAL CODE */
 
 /*
 	RETURNING FROM FORTH WORDS ----------------------------------------------------------------------
@@ -1294,6 +1327,8 @@ _KEY:
 	jmp _KEY
 
 2:	// Error or end of input: exit the program.
+	mov $0x0a,%eax // newline on exit
+	call _EMIT
 	xor %ebx,%ebx
 	mov $__NR_exit,%eax	// syscall: exit
 	int $0x80
@@ -2037,6 +2072,34 @@ _COMMA:
 	lodsl			// otherwise we need to skip the offset
 	NEXT
 
+        defcode "IFTHEN",6,,IFTHEN
+        pop %eax
+        test %eax,%eax // check TOS
+        jnz 1f // if true, skip increment
+        add $4,%esi
+1:      NEXT
+
+        defcode "ULTHEN",6,,ULTHEN
+        pop %eax
+        test %eax,%eax // check TOS
+        jz 1f // if false, skip increment
+        add $4,%esi
+1:      NEXT
+
+        defcode "IFELSE",6,,IFELSE // 2-option jump table
+        pop %eax
+        test %eax,%eax // check TOS
+        jz 1f
+
+        // TOS was true, exec first word
+        lodsl
+        add $4,%esi
+        jmp *(%eax)
+
+1:      // TOS was false, exec second word
+        add $4,%esi
+        NEXT
+
 /*
 	LITERAL STRINGS ----------------------------------------------------------------------
 
@@ -2050,7 +2113,7 @@ _COMMA:
 	defcode "LITSTRING",9,,LITSTRING
 	lodsl			// get the length of the string
 	push %esi		// push the address of the start of the string
-	push %eax		// push it on the stack
+	push %eax		// push the length on the stack
 	addl %eax,%esi		// skip past the string
  	addl $3,%esi		// but round up to next 4 byte boundary
 	andl $~3,%esi

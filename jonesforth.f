@@ -428,7 +428,7 @@
 	ALIGNED takes an address and rounds it up (aligns it) to the next 4 byte boundary.
 )
 : ALIGNED	( addr -- addr )
-	3 + 3 INVERT AND	( (addr+3) & ~3 )
+	3 + [ 3 INVERT ] LITERAL AND	( (addr+3) & ~3 )
 ;
 
 (
@@ -1784,5 +1784,5 @@ HIDE =NEXT
 	THEN
 ;
 
-WELCOME
+\WELCOME
 HIDE WELCOME
